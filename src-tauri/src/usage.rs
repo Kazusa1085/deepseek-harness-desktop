@@ -188,6 +188,17 @@ pub fn sessions() -> Result<(Vec<Session>, PathBuf), String> {
     Ok((sessions, path))
 }
 
+/// The harness's full id of the most recently used session, if any.
+///
+/// `sessions()` strips the `session-` prefix for display; the seed injected
+/// into the webview needs the full id back, so it is reconstructed here.
+pub fn latest_session_id() -> Option<String> {
+    let (sessions, _) = sessions().ok()?;
+    sessions
+        .first()
+        .map(|session| format!("session-{}", session.id))
+}
+
 // ---- balance -------------------------------------------------------------
 
 /// Pull `DEEPSEEK_API_KEY` out of the harness's credentials file.

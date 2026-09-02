@@ -97,7 +97,9 @@ Everything the user sees is upstream's UI. When the harness updates, the desktop
 
 1. The Rust shell resolves a backend command (see [Backend resolution](#backend-resolution)).
 2. It runs `dsh web --no-open --port 0` (`0` = the OS picks a free port), reading stdout for the line `dsh web: http://127.0.0.1:<port>`.
-3. Once that line appears, it creates the main window pointed at the announced URL.
+3. The main window is already open showing the splash page; once that line
+   appears, the splash webview is hidden and the harness and status panel
+   webviews take its place in the same window.
 4. On window close / app exit it terminates the whole server **process group**, so no orphan server — and no orphan tool subprocess the agent spawned — survives the window.
 
 A step-by-step walkthrough of the startup and shutdown sequences lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -228,7 +230,7 @@ src-tauri/                 Rust (Tauri) shell
   tauri.conf.json          app config (external webview, CSP, bundle targets)
   icons/                   generated platform icons
 backend/                   the harness runtime (installed by `npm run backend:install`)
-src/index.html             startup splash; progress bar plus an expandable log
+src/index.html             startup splash shown inside the main window; progress bar plus an always-visible log terminal
 src/titlebar.html          the Linux custom title bar (window controls + menu)
 assets/deepseek-whale.svg  the DeepSeek whale mark used by the app icon
 scripts/
@@ -287,6 +289,7 @@ Startup failures are shown in the window itself, with the exact command that was
 
 - **`app.security.csp` is `null` on purpose.** The harness UI evaluates client-side Cordis plugin code and opens a WebSocket to its own loopback origin; a restrictive CSP would break both. The window only ever loads `http://127.0.0.1:<port>` — see [SECURITY.md](SECURITY.md) for the full reasoning.
 - **External links leave the app.** Navigations that target the backend's loopback origin stay in the webview; `http`/`https`/`mailto`/`tel` destinations anywhere else are cancelled and handed to the system browser, as are `target="_blank"` popups.
+- **The last session comes back on launch.** The backend's random port means a fresh browser origin every run, which would otherwise wipe the harness's persisted session selection; the shell seeds the most recent session id from `session_projcache.json` into the page before it boots.
 - **Linux gets a custom title bar.** The native decorations (and their Edit/Window/Help menu) are disabled there, replaced by a separate app-local webview with window controls and a menu button that pops up the same View / Troubleshooting menu. macOS and Windows keep their native decorations.
 - **The port defaults to `0`.** The shell always reads the URL the server announces rather than assuming a port, so multiple instances coexist.
 - **Shutdown kills a process group, not a process.** The harness spawns shell tool subprocesses; killing only the server PID would strand them. On Unix the child is started as its own group leader and receives `SIGTERM` to the negated PID; on Windows the equivalent is `taskkill /T /F`.

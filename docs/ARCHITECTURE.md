@@ -92,13 +92,14 @@ harness and is identical to what the browser version stores.
    │                                               Timeout      → kill group, Err
    │                                               Disconnected → kill group, Err
    │
-   ├─ app.manage(BackendState(Some(backend)))
+   ├─ BackendState::set(backend)            ← refuses after exit
    │
-   ├─ create_main_window(app, url)
-   │    WebviewUrl::External(parsed_url)
-   │    1280×800, min 900×600, centered
+   ├─ activate_harness(app, url)
+   │    hide the splash child webview
+   │    add harness (WebviewUrl::External) and panel child webviews
+   │    re-apply layout in the same 1280×800 window
    │
-   └─ on any Err: eprintln + BackendState::shutdown() + exit(1)
+   └─ on any Err: report to the splash page + BackendState::shutdown()
 ```
 
 The 45-second `READY_TIMEOUT` is deliberately generous: resolution path 4
@@ -142,18 +143,17 @@ console window appears on Windows) and calls `dsh_desktop_lib::run()`.
 
 ### `src-tauri/src/lib.rs`
 
-- **`BackendState(Mutex<Option<Backend>>)`** — Tauri-managed state that holds
-  the live backend handle. `Option` because it is empty between `manage()` and
-  a successful spawn; `Mutex` because Tauri state must be `Sync`. `shutdown()`
-  `take()`s the value, so a double shutdown is a no-op rather than a
-  double-kill.
-- **`create_main_window`** — parses the announced URL and builds the window
-  with `WebviewUrl::External`. Parse failures are surfaced as
-  `io::ErrorKind::InvalidInput` rather than panicking. On Linux the window is
-  undecorated and a third child webview (`titlebar`) hosts the window controls;
-  on other platforms the native decorations remain. The harness webview has a
-  navigation handler that keeps loopback traffic inside and sends external
-  links to the system browser.
+- **`BackendState`** — Tauri-managed state that holds the live backend handle
+  plus an `exiting` flag. `Option` because it is empty between `manage()` and
+  a successful spawn. `shutdown()` drains the managed backend and then kills
+  any pending child that never got registered.
+- **`create_shell_window`** — opens the one application window up front: the
+  Linux custom title bar plus a splash child webview filling the content area.
+- **`activate_harness`** — hides the splash child webview and adds the harness
+  and panel child webviews in the same window once the URL is known. Parse
+  failures are surfaced as `io::ErrorKind::InvalidInput` rather than panicking.
+  The harness webview has a navigation handler that keeps loopback traffic
+  inside and sends external links to the system browser.
 - **`run`** — wires the setup hook, builds the app, and registers the
   `RunEvent::Exit` handler.
 
@@ -206,11 +206,12 @@ since it changes the conditions of the run.
 
 ### `src/index.html`
 
-The startup splash, shown while the backend resolves and announces its URL.
-It renders an indeterminate progress bar, a one-line status tail, and a
-collapsed `<details>` log — the same "progress by default, expand for the full
-stream" pattern an OS installer uses. Backend output is appended via
-`window.dshProgress` and kept to the last 1000 lines.
+The startup splash, shown as a child webview inside the main window while the
+backend resolves and announces its URL. It renders an indeterminate progress
+bar and an always-visible terminal-style log underneath; backend output is
+appended via `window.dshProgress`, kept to the last 1000 lines, and
+auto-scrolled. When the URL arrives, this webview is hidden and the harness
+takes its place in the same window.
 
 ### `src/titlebar.html`
 
@@ -340,7 +341,7 @@ as a last-resort bootstrap that works on a machine with nothing but Node.
 | No backend resolvable | `build_command` returns `Err`; the message names all three fixes; exit `1`. |
 | Backend spawns but never prints a URL | `recv_timeout` times out after 45 s; group killed; the resolved command and the last stderr lines are included in the error; exit `1`. |
 | Backend exits early (bad args, crash) | The channel disconnects when the reader thread ends; group killed; stderr tail reported; exit `1`. |
-| Announced URL is unparseable | `create_main_window` returns `Err`; backend shut down; exit `1`. |
+| Announced URL is unparseable | `activate_harness` returns `Err`; the splash shows the message and the backend is shut down. |
 | App killed with `SIGKILL` | No handler can run, so the server is orphaned. `SIGTERM`, `SIGINT` and `SIGHUP` are handled and take the backend's process group down before exiting. Closing the window — the normal path — tears everything down correctly. |
 
 All diagnostics are printed to stderr with a `dsh-desktop:` prefix.

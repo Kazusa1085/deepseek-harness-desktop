@@ -26,9 +26,11 @@ build is [0.1.7](#017--2026-08-26), pinned on the `stable` branch.
 - The command backing the panel refuses any caller that is not the panel
   webview, so the harness's own page cannot read the balance through the shared
   IPC bridge.
-- **The startup splash now shows an indeterminate progress bar with an
-  expandable log**, Ubuntu-installer style: the exact backend command and its
-  streamed output are one click away, and the last 1000 lines stay viewable.
+- **Startup happens in the one real window.** The app opens at its normal
+  size with the Linux custom title bar immediately, shows an indeterminate
+  progress bar above an always-visible terminal log in the content area, then
+  swaps that webview for the harness and status panel when the backend
+  announces its URL — no second window, no resize jump.
 - **External links open in the system browser.** Same-origin navigation stays
   in the app; `http`/`https`/`mailto`/`tel` destinations and `target="_blank"`
   popups elsewhere are intercepted and handed to the desktop.
@@ -38,6 +40,11 @@ build is [0.1.7](#017--2026-08-26), pinned on the `stable` branch.
   Windows are unchanged.
 - The Account card has a **refresh button** that forces an immediate
   `/user/balance` update; automatic refreshes stay on the five-minute cache.
+- **Launching reopens the most recently used session** instead of a new one.
+  The random loopback port used to give every run a fresh browser origin, so
+  the harness's persisted current-session selection never survived a restart;
+  the shell now seeds that selection from the session cache before the page
+  boots.
 
 ### Fixed
 

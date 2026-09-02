@@ -88,51 +88,49 @@
         100% { left: 100%; }
       }
 
-      .tail {
-        margin: 0.85rem auto 0;
-        max-width: 460px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 0.7rem;
-        color: #5f6875;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        direction: rtl;
-        text-align: center;
-        min-height: 1.1em;
-      }
-
-      /* Collapsed by default: a progress bar and one line of status. The full
-         stream is one click away, exactly like the Ubuntu installer. */
+      /* Always-visible terminal under the progress bar: the exact command and
+         the backend's streamed output, no expand button. */
       .log {
-        margin: 0.75rem auto 0;
-        max-width: 460px;
+        margin: 1rem auto 0;
+        max-width: 720px;
         text-align: left;
+        background: #12151b;
+        border: 1px solid #262b36;
+        border-radius: 10px;
+        overflow: hidden;
       }
-      .log summary {
-        display: inline-block;
-        cursor: pointer;
+      .log-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 11px;
+        border-bottom: 1px solid #1e232d;
+        background: #171a21;
+        font-size: 10px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--dim);
         user-select: none;
-        padding: 0.25rem 0.6rem;
-        border: 1px solid #262b36;
-        border-radius: 6px;
-        background: #171a21;
-        color: #9aa4b2;
-        font-size: 0.72rem;
       }
-      .log summary:hover { color: #d6dbe3; border-color: #39424f; }
+      .log-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--teal, #2dd4bf);
+        box-shadow: 0 0 8px rgba(45, 212, 191, 0.6);
+      }
+      .log-count { margin-left: auto; font-variant-numeric: tabular-nums; }
       .log pre {
-        margin: 0.6rem 0 0;
-        padding: 0.7rem 0.8rem;
-        max-height: 150px;
+        margin: 0;
+        padding: 10px 12px;
+        min-height: 180px;
+        max-height: 320px;
         overflow-y: auto;
-        background: #171a21;
-        border: 1px solid #262b36;
-        border-radius: 8px;
+        background: #0d1014;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 0.68rem;
-        line-height: 1.4;
-        color: #8b93a0;
+        font-size: 0.72rem;
+        line-height: 1.45;
+        color: #9aa4b2;
         white-space: pre-wrap;
         word-break: break-word;
         user-select: text;
@@ -177,12 +175,15 @@
         <h1 id="stage">Starting DeepSeek Harness&hellip;</h1>
         <p class="status"><span id="detail">Looking for Node.js</span></p>
         <div class="progress" aria-hidden="true"></div>
-        <div class="tail" id="tail"></div>
         <div class="elapsed" id="elapsed">0:00</div>
-        <details class="log" id="logbox">
-          <summary id="log-toggle">Show startup log</summary>
+        <div class="log" id="logbox">
+          <div class="log-head">
+            <span class="log-dot" aria-hidden="true"></span>
+            <span>Startup log</span>
+            <span class="log-count" id="log-count">0 lines</span>
+          </div>
           <pre id="log"></pre>
-        </details>
+        </div>
         <p class="note" id="note">
           On the portable build's first run the bundled runtime is unpacked
           (around 310&nbsp;MB). Later launches start in seconds.
@@ -206,25 +207,15 @@
         var scene = document.getElementById("scene");
         var stageEl = document.getElementById("stage");
         var detailEl = document.getElementById("detail");
-        var tailEl = document.getElementById("tail");
         var elapsedEl = document.getElementById("elapsed");
-        var logBox = document.getElementById("logbox");
         var logEl = document.getElementById("log");
-        var logToggle = document.getElementById("log-toggle");
+        var logCountEl = document.getElementById("log-count");
         var started = Date.now();
         var fetched = 0;
         var stage = "locating";
         var bubbles = 0;
         var logLines = [];
         var MAX_LOG_LINES = 1000;
-
-        function updateLogToggle() {
-          var verb = logBox.open ? "Hide" : "Show";
-          logToggle.textContent =
-            verb + " startup log (" + logLines.length + " lines)";
-        }
-
-        logBox.addEventListener("toggle", updateLogToggle);
 
         setInterval(function () {
           var s = Math.floor((Date.now() - started) / 1000);
@@ -260,13 +251,12 @@
         window.dshProgress = function (line) {
           line = String(line);
           bubble();
-          tailEl.textContent = line.length > 120 ? line.slice(-120) : line;
 
           logLines.push(line);
           if (logLines.length > MAX_LOG_LINES) logLines.shift();
           logEl.textContent = logLines.join("\n");
-          if (logBox.open) logEl.scrollTop = logEl.scrollHeight;
-          updateLogToggle();
+          logEl.scrollTop = logEl.scrollHeight;
+          logCountEl.textContent = logLines.length + " lines";
 
           if (line.indexOf("npm http") !== -1) {
             fetched++;

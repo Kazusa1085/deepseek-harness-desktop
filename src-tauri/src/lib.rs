@@ -22,8 +22,8 @@ use tauri::{
     menu::{Menu, MenuItem, Submenu},
     webview::{NewWindowResponse, WebviewBuilder},
     window::WindowBuilder,
-    AppHandle, LogicalPosition, LogicalSize, Manager, RunEvent, Webview, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, Window, WindowEvent,
+    AppHandle, LogicalPosition, LogicalSize, Manager, RunEvent, Webview, WebviewUrl, Window,
+    WindowEvent,
 };
 
 /// How wide the status panel is, in logical pixels.
@@ -94,6 +94,16 @@ fn layout(window: &Window, mode: PanelMode) {
     if let Some(titlebar) = window.get_webview(TITLEBAR_LABEL) {
         let _ = titlebar.set_position(LogicalPosition::new(0.0, 0.0));
         let _ = titlebar.set_size(LogicalSize::new(width, top));
+    }
+
+    // The splash fills the content area only until the harness exists.
+    if let Some(splash) = window.get_webview("splash") {
+        if window.get_webview("harness").is_none() {
+            let _ = splash.set_position(LogicalPosition::new(0.0, top));
+            let _ = splash.set_size(LogicalSize::new(width, content_height));
+        } else {
+            let _ = splash.hide();
+        }
     }
 
     // Never let the panel crowd out the harness on a narrow window.
@@ -222,6 +232,16 @@ mod linux_layout {
                 if let Some(widget) = state.webviews.get(TITLEBAR_LABEL) {
                     place(widget, 0.0, 0.0, width, top);
                 }
+
+                let has_harness = state.webviews.contains_key("harness");
+                if let Some(widget) = state.webviews.get("splash") {
+                    if has_harness {
+                        widget.set_visible(false);
+                    } else {
+                        place(widget, 0.0, top, width, content_height);
+                    }
+                }
+
                 if let Some(widget) = state.webviews.get("harness") {
                     place(widget, 0.0, top, harness_width, content_height);
                 }
@@ -473,34 +493,13 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-/// The window shown while the backend starts.
+/// Create the one and only application window, at startup.
 ///
-/// It exists so the app is never a blank screen. A locally installed backend
-/// is ready in a second or two, but the portable build fetches the harness on
-/// first run, which takes minutes — without something on screen that is
-/// indistinguishable from a crash.
-fn create_splash_window(app: &tauri::App) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(app, "splash", WebviewUrl::App("index.html".into()))
-        .title("DeepSeek Harness Desktop")
-        .inner_size(560.0, 360.0)
-        .resizable(false)
-        .center()
-        .build()
-}
-
-/// Create the main window: the harness on the left and the status panel on
-/// the right, plus the Linux custom title bar across the top.
-///
-/// Separate webviews rather than one, because the panel and title bar must not
-/// be injected into the harness's page. Injecting would mean our markup living
-/// inside a UI we do not control, breaking whenever it changes — and this
-/// shell's whole point is that it leaves the harness alone.
-fn create_main_window(app: &AppHandle, url: &str, mode: PanelMode) -> tauri::Result<Window> {
-    let target = url
-        .parse::<url::Url>()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-    let origin = target.clone();
-
+/// The content area initially hosts the splash page. When the backend
+/// announces its URL, [`activate_harness`] swaps that webview for the harness
+/// and the status panel in the same window, so the startup page appears to
+/// refresh into the app instead of being replaced by a second window.
+fn create_shell_window(app: &tauri::App) -> tauri::Result<Window> {
     let builder = WindowBuilder::new(app, "main")
         .title("DeepSeek Harness Desktop")
         .inner_size(1280.0, 800.0)
@@ -515,11 +514,94 @@ fn create_main_window(app: &AppHandle, url: &str, mode: PanelMode) -> tauri::Res
 
     let window = builder.build()?;
 
+    #[cfg(target_os = "linux")]
+    {
+        let titlebar = window.add_child(
+            WebviewBuilder::new(TITLEBAR_LABEL, WebviewUrl::App("titlebar.html".into())),
+            LogicalPosition::new(0.0, 0.0),
+            LogicalSize::new(1280.0, TITLEBAR_HEIGHT),
+        )?;
+        linux_layout::attach(
+            &window,
+            TITLEBAR_LABEL,
+            titlebar,
+            0.0,
+            0.0,
+            1280.0,
+            TITLEBAR_HEIGHT,
+        );
+    }
+
+    let splash = window.add_child(
+        WebviewBuilder::new("splash", WebviewUrl::App("index.html".into())),
+        LogicalPosition::new(0.0, TITLEBAR_HEIGHT),
+        LogicalSize::new(1280.0, 800.0 - TITLEBAR_HEIGHT),
+    )?;
+    #[cfg(target_os = "linux")]
+    linux_layout::attach(
+        &window,
+        "splash",
+        splash,
+        0.0,
+        TITLEBAR_HEIGHT,
+        1280.0,
+        800.0 - TITLEBAR_HEIGHT,
+    );
+
+    layout(&window, PanelMode::default());
+    Ok(window)
+}
+
+/// An initialization script that restores the harness's last current session.
+///
+/// The backend listens on a fresh loopback port every launch, so the webview
+/// sees a new origin and the harness's `localStorage`-persisted selection
+/// would otherwise be empty — which is why a new session appeared on every
+/// start. Seed the persisted `dsh.sessions.current` key before the page's
+/// scripts run, once per webview lifetime; `sessionStorage` keeps a reload
+/// from overwriting a selection the user makes later in the same run.
+fn resume_session_script() -> String {
+    let Some(id) = usage::latest_session_id() else {
+        return String::new();
+    };
+    let id = serde_json::to_string(&id).unwrap_or_else(|_| "null".to_string());
+    format!(
+        "(()=>{{try{{if(!sessionStorage.getItem('dsh-desktop-seeded')){{\
+         localStorage.setItem('dsh.sessions.current',JSON.stringify({{sessionId:{id}}}));\
+         sessionStorage.setItem('dsh-desktop-seeded','1')\
+         }}}}catch(_){{}}}})();"
+    )
+}
+
+/// Swap the startup splash for the live harness and status panel.
+///
+/// Separate webviews rather than one, because the panel and title bar must not
+/// be injected into the harness's page. Injecting would mean our markup living
+/// inside a UI we do not control, breaking whenever it changes — and this
+/// shell's whole point is that it leaves the harness alone.
+fn activate_harness(app: &AppHandle, url: &str, mode: PanelMode) -> tauri::Result<()> {
+    let window = app.get_window("main").ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "the main window is gone")
+    })?;
+    let target = url
+        .parse::<url::Url>()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    let origin = target.clone();
+
+    // The splash stays in the window, hidden under the new webviews. Keeping it
+    // avoids destroying a webview mid-session, and on Linux the fixed container
+    // already layers later children above it.
+    if let Some(splash) = window.get_webview("splash") {
+        let _ = splash.hide();
+    }
+
     // Each closure below needs its own copy of the origin because both are
     // `'static` `Fn`s kept by the webview.
     let nav_origin = origin.clone();
     let new_window_origin = origin.clone();
+    let resume_script = resume_session_script();
     let harness = WebviewBuilder::new("harness", WebviewUrl::External(target))
+        .initialization_script(resume_script.as_str())
         .on_navigation(move |url| navigation_policy(url, &nav_origin))
         .on_new_window(move |url, _features| {
             if navigation_policy(&url, &new_window_origin) {
@@ -545,24 +627,6 @@ fn create_main_window(app: &AppHandle, url: &str, mode: PanelMode) -> tauri::Res
         800.0 - TITLEBAR_HEIGHT,
     );
 
-    #[cfg(target_os = "linux")]
-    {
-        let titlebar = window.add_child(
-            WebviewBuilder::new(TITLEBAR_LABEL, WebviewUrl::App("titlebar.html".into())),
-            LogicalPosition::new(0.0, 0.0),
-            LogicalSize::new(1280.0, TITLEBAR_HEIGHT),
-        )?;
-        linux_layout::attach(
-            &window,
-            TITLEBAR_LABEL,
-            titlebar,
-            0.0,
-            0.0,
-            1280.0,
-            TITLEBAR_HEIGHT,
-        );
-    }
-
     let panel = window.add_child(
         WebviewBuilder::new(usage::PANEL_LABEL, WebviewUrl::App("panel.html".into())),
         LogicalPosition::new(960.0, TITLEBAR_HEIGHT),
@@ -580,7 +644,7 @@ fn create_main_window(app: &AppHandle, url: &str, mode: PanelMode) -> tauri::Res
     );
 
     layout(&window, mode);
-    Ok(window)
+    Ok(())
 }
 
 /// The custom title bar is the only webview allowed to drive window chrome.
@@ -591,12 +655,18 @@ fn require_titlebar(webview: &Webview) -> Result<Window, String> {
     Ok(webview.window())
 }
 
-/// Pop up the regular View / Troubleshooting menu at the cursor.
+/// Pop up the regular View / Troubleshooting menu under the clicked button.
+///
+/// The cursor-position variant is unreliable under Wayland, so the title bar
+/// passes its click coordinates and the menu is anchored explicitly relative
+/// to the window.
 #[tauri::command]
-fn titlebar_menu(webview: Webview) -> Result<(), String> {
+fn titlebar_menu(webview: Webview, x: f64, y: f64) -> Result<(), String> {
     let window = require_titlebar(&webview)?;
     let menu = window.app_handle().state::<MenuState>().0.clone();
-    window.popup_menu(&menu).map_err(|e| e.to_string())
+    window
+        .popup_menu_at(&menu, LogicalPosition::new(x, y + TITLEBAR_HEIGHT))
+        .map_err(|e| e.to_string())
 }
 
 /// Minimize, maximize/restore, or close from the custom title bar.
@@ -618,8 +688,16 @@ fn titlebar_window(webview: Webview, action: String) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// Stream a line of backend output into the splash window.
-fn report_progress(splash: &WebviewWindow, line: &str) {
+/// The splash webview inside the main window, if it is still visible.
+fn splash_webview(app: &AppHandle) -> Option<Webview> {
+    app.get_window("main")?.get_webview("splash")
+}
+
+/// Stream a line of backend output into the splash page.
+fn report_progress(app: &AppHandle, line: &str) {
+    let Some(splash) = splash_webview(app) else {
+        return;
+    };
     if let Ok(payload) = serde_json::to_string(line) {
         let _ = splash.eval(format!(
             "window.dshProgress && window.dshProgress({payload})"
@@ -627,16 +705,19 @@ fn report_progress(splash: &WebviewWindow, line: &str) {
     }
 }
 
-/// Render a startup failure inside the splash window.
+/// Render a startup failure inside the splash page.
 ///
 /// A GUI app has no console, so `eprintln!` alone means the user sees the
 /// window vanish with no explanation. The message is passed through
 /// `serde_json` so quotes and newlines in a backend error cannot break out of
 /// the JavaScript string.
-fn report_failure(splash: &WebviewWindow, message: &str) {
+fn report_failure(app: &AppHandle, message: &str) {
     logging::line(&format!("dsh-desktop: {message}"));
     let payload = serde_json::to_string(message)
         .unwrap_or_else(|_| "\"the backend failed to start\"".to_string());
+    let Some(splash) = splash_webview(app) else {
+        return;
+    };
     let _ = splash.eval(format!(
         "window.dshShowError && window.dshShowError({payload})"
     ));
@@ -669,19 +750,29 @@ pub fn run() {
             }
 
             let roots = backend::search_roots(app);
-            let splash = create_splash_window(app)?;
+            let shell = create_shell_window(app)?;
+            let resized = shell.clone();
+            shell.on_window_event(move |event| {
+                if let WindowEvent::Resized(_) = event {
+                    let mode = resized
+                        .try_state::<PanelState>()
+                        .and_then(|s| s.0.lock().ok().map(|m| *m))
+                        .unwrap_or_default();
+                    layout(&resized, mode);
+                }
+            });
             let handle = app.handle().clone();
 
             // Starting the backend must not block `setup`: nothing renders
             // until the setup hook returns, so waiting here would hide the
-            // splash window we just created.
+            // window we just created.
             thread::spawn(move || {
-                let progress = splash.clone();
+                let progress = handle.clone();
                 match backend::spawn_backend(&roots, move |line| report_progress(&progress, line)) {
                     Ok((backend, url)) => {
-                        // A late success after the splash was closed means the
+                        // A late success after the window was closed means the
                         // app is already tearing down; `set` shut the backend
-                        // down and we must not open a window.
+                        // down and we must not open the harness.
                         if !handle.state::<BackendState>().set(backend) {
                             return;
                         }
@@ -689,32 +780,14 @@ pub fn run() {
                             .try_state::<PanelState>()
                             .and_then(|s| s.0.lock().ok().map(|m| *m))
                             .unwrap_or_default();
-                        match create_main_window(&handle, &url, mode) {
-                            Ok(window) => {
-                                // The webviews are positioned by hand, so
-                                // nothing else keeps them in step with the
-                                // window as it is resized.
-                                let resized = window.clone();
-                                window.on_window_event(move |event| {
-                                    if let WindowEvent::Resized(_) = event {
-                                        let mode = resized
-                                            .try_state::<PanelState>()
-                                            .and_then(|s| s.0.lock().ok().map(|m| *m))
-                                            .unwrap_or_default();
-                                        layout(&resized, mode);
-                                    }
-                                });
-                                let _ = splash.close();
-                            }
-                            Err(e) => {
-                                report_failure(&splash, &format!("could not open the window: {e}"));
-                                handle.state::<BackendState>().shutdown();
-                            }
+                        if let Err(e) = activate_harness(&handle, &url, mode) {
+                            report_failure(&handle, &format!("could not open the window: {e}"));
+                            handle.state::<BackendState>().shutdown();
                         }
                     }
-                    // The splash window stays open holding the message, so
-                    // the user can read it and close the app themselves.
-                    Err(message) => report_failure(&splash, &message),
+                    // The splash page stays open holding the message, so the
+                    // user can read it and close the app themselves.
+                    Err(message) => report_failure(&handle, &message),
                 }
             });
 

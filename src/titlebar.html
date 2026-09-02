@@ -100,8 +100,8 @@
           window.__TAURI_INTERNALS__.invoke(command, args).catch(function () {});
         };
 
-        document.getElementById("menu").addEventListener("click", function () {
-          invoke("titlebar_menu");
+        document.getElementById("menu").addEventListener("click", function (event) {
+          invoke("titlebar_menu", { x: event.clientX, y: event.clientY });
         });
         document.getElementById("minimize").addEventListener("click", function () {
           invoke("titlebar_window", { action: "minimize" });
