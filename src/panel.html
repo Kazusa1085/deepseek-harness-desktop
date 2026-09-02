@@ -14,7 +14,12 @@
       .wrap { padding:12px; display:flex; flex-direction:column; gap:10px; }
       .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:11px 12px; }
       .card h2 { margin:0 0 9px; font-size:10.5px; font-weight:600; letter-spacing:.07em;
-                 text-transform:uppercase; color:var(--dim); }
+                 text-transform:uppercase; color:var(--dim); display:flex; align-items:center; gap:8px; }
+      .card h2 .refresh { margin-left:auto; display:inline-flex; align-items:center; justify-content:center;
+                 width:22px; height:22px; border:1px solid var(--line); border-radius:6px;
+                 background:transparent; color:var(--dim); font-size:13px; line-height:1; cursor:pointer; }
+      .card h2 .refresh:hover:not(:disabled) { color:var(--text); border-color:#39424f; background:var(--hover, #1b1f28); }
+      .card h2 .refresh:disabled { opacity:.45; cursor:default; }
       .row { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin:5px 0; }
       .row .k { color:var(--dim); }
       .row .v { font-variant-numeric:tabular-nums; }
@@ -47,7 +52,7 @@
     <footer id="foot"></footer>
 
     <script>
-      const invoke = (cmd) => window.__TAURI_INTERNALS__.invoke(cmd);
+      const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args);
       const n = (v) => (v ?? 0).toLocaleString();
       const compact = (v) => {
         v = v ?? 0;
@@ -69,15 +74,17 @@
         return `<div class="meter">${segs}</div><div class="legend">${legend}</div>`;
       }
 
+      const REFRESH_BTN = '<button class="refresh" id="balance-refresh" title="Refresh balance now">↻</button>';
+
       function balanceCard(s) {
         if (s.balance_error) {
-          return `<div class="card"><h2>Account</h2><div class="err">${s.balance_error}</div></div>`;
+          return `<div class="card"><h2>Account ${REFRESH_BTN}</h2><div class="err">${s.balance_error}</div></div>`;
         }
         const b = s.balance;
         if (!b) return "";
         const state = b.available ? '<span class="pill ok">active</span>' : '<span class="pill bad">depleted</span>';
         return `<div class="card">
-          <h2>Account ${state}</h2>
+          <h2>Account ${state} ${REFRESH_BTN}</h2>
           <div class="big">${b.total}<span class="unit">${b.currency}</span></div>
           <div class="row"><span class="k">Topped up</span><span class="v">${b.topped_up}</span></div>
           <div class="row"><span class="k">Granted</span><span class="v">${b.granted}</span></div>
@@ -171,6 +178,23 @@
         document.getElementById("wrap").innerHTML = html;
         document.getElementById("foot").textContent =
           "measured locally · no usage API exists";
+
+        const refreshBtn = document.getElementById("balance-refresh");
+        if (refreshBtn) refreshBtn.addEventListener("click", refreshBalance);
+      }
+
+      async function refreshBalance() {
+        const btn = document.getElementById("balance-refresh");
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "…";
+        }
+        try {
+          await invoke("refresh_balance");
+        } catch (e) {
+          document.getElementById("foot").textContent = `balance refresh failed: ${String(e)}`;
+        }
+        await refresh();
       }
 
       refresh();

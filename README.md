@@ -257,7 +257,7 @@ inside it, showing what the current session is actually costing:
 
 | Card | Where the numbers come from |
 |---|---|
-| **Account** | DeepSeek `/user/balance`, using the key the harness already stores |
+| **Account** | DeepSeek `/user/balance`, using the key the harness already stores; cached for five minutes, with a refresh button for an immediate update |
 | **Context** | `surfaceTokens` against `contextWindow` — how full the window is |
 | **Tokens** | Cached reads, uncached input and output, with the cache hit rate |
 | **What fills it** | The split between messages, tools and system prompt |

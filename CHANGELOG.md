@@ -36,6 +36,17 @@ build is [0.1.7](#017--2026-08-26), pinned on the `stable` branch.
   Edit/Window/Help menu are gone there; a separate app-local webview provides
   window controls and a menu button for View / Troubleshooting. macOS and
   Windows are unchanged.
+- The Account card has a **refresh button** that forces an immediate
+  `/user/balance` update; automatic refreshes stay on the five-minute cache.
+
+### Fixed
+
+- **Balance lookups no longer block the UI.** The panel commands are async,
+  the network request runs on Tauri's blocking thread pool, and automatic
+  refreshes are single-flight with errors cached too.
+- **Closing the window during startup no longer orphans the backend.** The
+  child is registered for teardown the moment it spawns, before it announces
+  its URL, and a late startup success cannot open a window for an exiting app.
 
 ### Notes
 

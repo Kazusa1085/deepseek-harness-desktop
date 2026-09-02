@@ -10,7 +10,13 @@ mod logging;
 mod portable;
 mod usage;
 
-use std::{sync::Mutex, thread};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+    thread,
+};
 
 use tauri::{
     menu::{Menu, MenuItem, Submenu},
@@ -247,21 +253,46 @@ fn layout(window: &Window, mode: PanelMode) {
 use backend::Backend;
 
 /// Managed state holding the live server process for shutdown.
-struct BackendState(Mutex<Option<Backend>>);
+///
+/// `exiting` closes the race with the startup thread: the backend is spawned
+/// off-thread and is only registered here once it announces its URL. If the
+/// user closes the splash window before that, `RunEvent::Exit` must still be
+/// able to stop the pending child, and a late `set` must not create a window
+/// for an app that is already going away.
+struct BackendState {
+    backend: Mutex<Option<Backend>>,
+    exiting: AtomicBool,
+}
 
 impl BackendState {
-    fn set(&self, backend: Backend) {
-        if let Ok(mut guard) = self.0.lock() {
-            *guard = Some(backend);
+    /// Store the live backend. Returns `false` when the app is already exiting;
+    /// in that case the backend has been shut down by this call and the caller
+    /// must not continue creating the main window.
+    fn set(&self, mut backend: Backend) -> bool {
+        if self.exiting.load(Ordering::SeqCst) {
+            backend.shutdown();
+            return false;
         }
+        if let Ok(mut guard) = self.backend.lock() {
+            *guard = Some(backend);
+            // On unix the pgid stays published for the signal handler; the
+            // Windows pending-pid fallback is no longer needed once managed.
+            backend::clear_pending();
+            return true;
+        }
+        backend.shutdown();
+        false
     }
 
     fn shutdown(&self) {
-        if let Ok(mut guard) = self.0.lock() {
+        self.exiting.store(true, Ordering::SeqCst);
+        if let Ok(mut guard) = self.backend.lock() {
             if let Some(mut backend) = guard.take() {
                 backend.shutdown();
             }
         }
+        // Covers a child that was spawned but never made it into `backend`.
+        backend::kill_pending();
     }
 }
 
@@ -615,7 +646,10 @@ fn report_failure(splash: &WebviewWindow, message: &str) {
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
-            app.manage(BackendState(Mutex::new(None)));
+            app.manage(BackendState {
+                backend: Mutex::new(None),
+                exiting: AtomicBool::new(false),
+            });
             app.manage(PanelState(Mutex::new(PanelMode::default())));
             backend::install_signal_handlers();
 
@@ -645,7 +679,12 @@ pub fn run() {
                 let progress = splash.clone();
                 match backend::spawn_backend(&roots, move |line| report_progress(&progress, line)) {
                     Ok((backend, url)) => {
-                        handle.state::<BackendState>().set(backend);
+                        // A late success after the splash was closed means the
+                        // app is already tearing down; `set` shut the backend
+                        // down and we must not open a window.
+                        if !handle.state::<BackendState>().set(backend) {
+                            return;
+                        }
                         let mode = handle
                             .try_state::<PanelState>()
                             .and_then(|s| s.0.lock().ok().map(|m| *m))
@@ -683,6 +722,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             usage::usage_snapshot,
+            usage::refresh_balance,
             titlebar_menu,
             titlebar_window
         ])

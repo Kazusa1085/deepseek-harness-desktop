@@ -58,8 +58,8 @@ What that means precisely:
 - It is **never** copied to another file, written to the log, included in an
   error message, or exposed to a webview. The balance response is what reaches
   the panel; the key stays in the Rust process.
-- The result is cached for five minutes, so the key is used at most twelve
-  times an hour.
+- The result is cached for five minutes; only the Account card's refresh
+  button makes an additional request before that window elapses.
 - If you would rather it were not read at all, the panel works without it: every
   other number it shows is measured locally, and a missing key produces a
   message in place of the balance rather than an error.

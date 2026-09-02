@@ -109,6 +109,7 @@ pub struct Backend {
 impl Backend {
     /// Gracefully stop the server (SIGTERM to the group), then force-kill.
     pub fn shutdown(&mut self) {
+        clear_pending();
         // Clear it first: once the group is gone the id could be reused, and a
         // late signal must not take an unrelated process with it.
         #[cfg(unix)]
@@ -125,6 +126,9 @@ impl Drop for Backend {
     fn drop(&mut self) {
         // Backstop: if the app exits without an explicit `shutdown`, make sure
         // the child server does not outlive us.
+        clear_pending();
+        #[cfg(unix)]
+        BACKEND_PGID.store(0, std::sync::atomic::Ordering::SeqCst);
         terminate_group(self.pid);
         let _ = self.child.kill();
     }
@@ -471,6 +475,49 @@ fn missing_node_message(needed_by: &str) -> String {
 #[cfg(unix)]
 static BACKEND_PGID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+/// Windows equivalent of the pending pid: the shell has no signal handler
+/// there, so early-window-close cleanup reads this instead.
+#[cfg(windows)]
+static PENDING_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Remember the just-spawned child before it has announced its URL, so an
+/// early window close or a signal can still take it down.
+pub fn mark_pending(pid: u32) {
+    #[cfg(unix)]
+    BACKEND_PGID.store(pid as i32, std::sync::atomic::Ordering::SeqCst);
+    #[cfg(windows)]
+    PENDING_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The child is now owned by `BackendState`; only the Windows fallback needs
+/// clearing, because on unix the pgid doubles as the signal-handler kill
+/// target until `Backend::shutdown` clears it.
+pub fn clear_pending() {
+    #[cfg(windows)]
+    PENDING_PID.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Kill a spawned-but-not-yet-registered backend. Called from `RunEvent::Exit`
+/// after the managed state has been drained, so the two paths never overlap.
+pub fn kill_pending() {
+    #[cfg(unix)]
+    {
+        let pgid = BACKEND_PGID.swap(0, std::sync::atomic::Ordering::SeqCst);
+        if pgid > 0 {
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        let pid = PENDING_PID.swap(0, std::sync::atomic::Ordering::SeqCst);
+        if pid > 0 {
+            terminate_group(pid);
+        }
+    }
+}
+
 /// Kill the backend from a signal handler, then leave immediately.
 ///
 /// Only `kill` and `_exit` are called, both async-signal-safe. `_exit` skips
@@ -638,6 +685,9 @@ pub fn spawn_backend(
         format!("failed to start the DeepSeek Harness backend ({description}): {e}")
     })?;
     let pid = child.id();
+    // The child is live from this moment, before it announces its URL. Register
+    // it so an early window close or signal can still kill the whole tree.
+    mark_pending(pid);
 
     let (tx, rx) = mpsc::channel::<Event>();
     if let Some(stdout) = child.stdout.take() {
@@ -709,11 +759,14 @@ pub fn spawn_backend(
 
     match outcome {
         Ok(url) => {
-            #[cfg(unix)]
-            BACKEND_PGID.store(pid as i32, std::sync::atomic::Ordering::SeqCst);
+            // `mark_pending` already published the pgid/pid, so signals and an
+            // early-exit kill stay effective until `BackendState` takes over.
             Ok((Backend { child, pid }, url))
         }
         Err(reason) => {
+            clear_pending();
+            #[cfg(unix)]
+            BACKEND_PGID.store(0, std::sync::atomic::Ordering::SeqCst);
             terminate_group(pid);
             let _ = child.kill();
             let _ = child.wait();

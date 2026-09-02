@@ -16,12 +16,13 @@
 use std::{
     env, fs,
     path::PathBuf,
-    sync::{Mutex, OnceLock},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
 use serde::Serialize;
 use serde_json::Value;
+use tokio::sync::Mutex;
 
 /// How stale the cached balance may get before it is fetched again.
 const BALANCE_TTL: Duration = Duration::from_secs(300);
@@ -271,45 +272,60 @@ fn balance_cache() -> &'static Mutex<Option<CachedBalance>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
+/// Serialise balance refreshes: whoever holds this lock performs the request,
+/// everyone else waits and then reuses the result.
+static BALANCE_FETCH_LOCK: Mutex<()> = Mutex::const_new(());
+
 /// The cached balance, refreshed at most every [`BALANCE_TTL`].
-fn balance() -> Result<Balance, String> {
-    if let Ok(guard) = balance_cache().lock() {
-        if let Some((fetched, cached)) = guard.as_ref() {
+///
+/// Runs off the command thread: the network request is handed to Tauri's
+/// blocking thread pool, so the UI never waits on DeepSeek.
+async fn balance(force: bool) -> Result<Balance, String> {
+    if !force {
+        if let Some((fetched, cached)) = balance_cache().lock().await.as_ref() {
             if fetched.elapsed() < BALANCE_TTL {
                 return cached.clone();
             }
         }
     }
 
-    let fresh = request_balance();
-    if let Ok(mut guard) = balance_cache().lock() {
-        *guard = Some((Instant::now(), fresh.clone()));
+    // Single-flight for automatic refreshes. A manual refresh skips the wait
+    // and always asks the API again.
+    let _guard = if force {
+        None
+    } else {
+        Some(BALANCE_FETCH_LOCK.lock().await)
+    };
+
+    if !force {
+        if let Some((fetched, cached)) = balance_cache().lock().await.as_ref() {
+            if fetched.elapsed() < BALANCE_TTL {
+                return cached.clone();
+            }
+        }
     }
+
+    let fresh = match tauri::async_runtime::spawn_blocking(request_balance).await {
+        Ok(result) => result,
+        Err(e) => Err(format!("balance request failed: {e}")),
+    };
+
+    // Cache failures too: a rejected key or an offline machine should not
+    // trigger a new request every two seconds.
+    *balance_cache().lock().await = Some((Instant::now(), fresh.clone()));
     fresh
 }
 
-// ---- the command the panel calls ----------------------------------------
-
-/// The label of the webview allowed to read this. The harness page shares the
-/// window and therefore the IPC bridge, and it has no business reading the
-/// account balance, so the caller is checked rather than trusted.
-pub const PANEL_LABEL: &str = "panel";
-
-#[tauri::command]
-pub fn usage_snapshot(webview: tauri::Webview) -> Result<Snapshot, String> {
-    if webview.label() != PANEL_LABEL {
-        return Err("usage data is only available to the status panel".to_string());
-    }
-    Ok(snapshot())
-}
-
-fn snapshot() -> Snapshot {
-    let (sessions, source) = match sessions() {
+fn snapshot_from(
+    sessions: Result<(Vec<Session>, PathBuf), String>,
+    balance: Result<Balance, String>,
+) -> Snapshot {
+    let (sessions, source) = match sessions {
         Ok((sessions, path)) => (sessions, Some(path.display().to_string())),
         Err(_) => (Vec::new(), None),
     };
 
-    let (balance, balance_error) = match balance() {
+    let (balance, balance_error) = match balance {
         Ok(balance) => (Some(balance), None),
         Err(message) => (None, Some(message)),
     };
@@ -320,6 +336,36 @@ fn snapshot() -> Snapshot {
         balance_error,
         source,
     }
+}
+
+// ---- the commands the panel calls ---------------------------------------
+
+/// The label of the webview allowed to read this. The harness page shares the
+/// window and therefore the IPC bridge, and it has no business reading the
+/// account balance, so the caller is checked rather than trusted.
+pub const PANEL_LABEL: &str = "panel";
+
+#[tauri::command]
+pub async fn usage_snapshot(webview: tauri::Webview) -> Result<Snapshot, String> {
+    if webview.label() != PANEL_LABEL {
+        return Err("usage data is only available to the status panel".to_string());
+    }
+
+    let sessions = tauri::async_runtime::spawn_blocking(sessions)
+        .await
+        .map_err(|e| format!("could not read sessions: {e}"))?;
+    let balance = balance(false).await;
+
+    Ok(snapshot_from(sessions, balance))
+}
+
+/// Force a fresh `/user/balance` request and return the new value.
+#[tauri::command]
+pub async fn refresh_balance(webview: tauri::Webview) -> Result<Balance, String> {
+    if webview.label() != PANEL_LABEL {
+        return Err("usage data is only available to the status panel".to_string());
+    }
+    balance(true).await
 }
 
 #[cfg(test)]
@@ -463,7 +509,7 @@ mod live {
     #[ignore]
     fn fetches_the_real_balance() {
         // Never prints the key, only what the endpoint returned.
-        match super::balance() {
+        match super::request_balance() {
             Ok(b) => println!(
                 "balance: {} {} (granted {}, topped up {}) available={}",
                 b.total, b.currency, b.granted, b.topped_up, b.available

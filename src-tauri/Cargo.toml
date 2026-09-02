@@ -43,6 +43,9 @@ flate2 = { version = "1", optional = true }
 # A single GET to DeepSeek's balance endpoint. `ureq` is blocking and small;
 # the alternative was pulling a full async HTTP stack for one request.
 ureq = { version = "2", features = ["json", "tls"], default-features = false }
+# Balance refreshes are serialised through a tokio mutex; the network call
+# itself runs on Tauri's blocking thread pool.
+tokio = { version = "1", features = ["sync"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
