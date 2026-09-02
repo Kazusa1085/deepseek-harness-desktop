@@ -675,6 +675,7 @@ name = "dsh-desktop"
 version = "0.2.0"
 dependencies = [
  "flate2",
+ "gtk",
  "libc",
  "serde",
  "serde_json",
@@ -682,6 +683,7 @@ dependencies = [
  "tauri-build",
  "ureq",
  "url",
+ "webkit2gtk",
 ]
 
 [[package]]

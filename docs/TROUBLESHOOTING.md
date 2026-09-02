@@ -170,9 +170,9 @@ with the page or the network; a pipe was full.
 
 ## A server keeps running after closing the app
 
-Closing the window terminates the whole process group. Killing the app with a
-signal does not: neither `kill` (`SIGTERM`) nor `kill -9` (`SIGKILL`, Force
-Quit) runs the shutdown handler, so the server is left behind.
+Closing the window terminates the whole process group. `SIGTERM`, `SIGINT` and
+`SIGHUP` are handled too. Only `kill -9` (`SIGKILL`, Force Quit) cannot run the
+shutdown handler, so only that leaves the server behind.
 
 Find and stop the survivor:
 

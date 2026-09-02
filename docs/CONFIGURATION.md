@@ -128,7 +128,8 @@ rather than a hang.
 
 ## Where harness state lives
 
-The shell writes nothing. Sessions, credentials and settings are stored by the
+The shell writes only its per-run log file and — for portable builds — the
+unpacked runtime cache. Sessions, credentials and settings are stored by the
 harness in its own location (see the upstream
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 documentation). Two consequences worth knowing:

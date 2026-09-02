@@ -16,9 +16,10 @@
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         background: radial-gradient(120% 90% at 50% 0%, #182033 0%, #0f1115 60%);
         color: #e6e8eb;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
       }
-      main { text-align: center; padding: 1.6rem; width: 100%; max-width: 520px; }
+      main { margin: auto; text-align: center; padding: 1.6rem; width: 100%; max-width: 520px; }
 
       /* --- the whale, and the water it swims in --- */
       .scene {
@@ -60,6 +61,33 @@
       h1 { font-size: 1.05rem; font-weight: 600; margin: 0.2rem 0 0.3rem; }
       .status { color: var(--dim); font-size: 0.85rem; margin: 0; min-height: 1.2em; }
       .counter { color: #cfd6e4; font-variant-numeric: tabular-nums; }
+
+      /* An indeterminate bar, like an OS installer: calm when it is moving,
+         meaningful when it stops. */
+      .progress {
+        position: relative;
+        height: 4px;
+        margin: 0.75rem auto 0;
+        max-width: 460px;
+        border-radius: 2px;
+        background: #1a1f2b;
+        overflow: hidden;
+      }
+      .progress::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 42%;
+        border-radius: 2px;
+        background: linear-gradient(90deg, #2f5bff, #4d6bfe, #2f5bff);
+        animation: sweep 1.3s ease-in-out infinite;
+      }
+      @keyframes sweep {
+        0%   { left: -42%; }
+        100% { left: 100%; }
+      }
+
       .tail {
         margin: 0.85rem auto 0;
         max-width: 460px;
@@ -73,11 +101,48 @@
         text-align: center;
         min-height: 1.1em;
       }
+
+      /* Collapsed by default: a progress bar and one line of status. The full
+         stream is one click away, exactly like the Ubuntu installer. */
+      .log {
+        margin: 0.75rem auto 0;
+        max-width: 460px;
+        text-align: left;
+      }
+      .log summary {
+        display: inline-block;
+        cursor: pointer;
+        user-select: none;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid #262b36;
+        border-radius: 6px;
+        background: #171a21;
+        color: #9aa4b2;
+        font-size: 0.72rem;
+      }
+      .log summary:hover { color: #d6dbe3; border-color: #39424f; }
+      .log pre {
+        margin: 0.6rem 0 0;
+        padding: 0.7rem 0.8rem;
+        max-height: 150px;
+        overflow-y: auto;
+        background: #171a21;
+        border: 1px solid #262b36;
+        border-radius: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.68rem;
+        line-height: 1.4;
+        color: #8b93a0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        user-select: text;
+      }
       .elapsed { margin-top: 0.55rem; font-size: 0.72rem; color: #5f6875; font-variant-numeric: tabular-nums; }
       .note { margin-top: 0.9rem; font-size: 0.76rem; color: #6b7381; line-height: 1.5; }
 
       /* --- error state --- */
       body.failed .live { display: none; }
+      body.failed .progress { display: none; }
       .error { display: none; text-align: left; }
       body.failed .error { display: block; }
       .error h1 { color: #ff7b72; text-align: center; }
@@ -111,11 +176,16 @@
         </div>
         <h1 id="stage">Starting DeepSeek Harness&hellip;</h1>
         <p class="status"><span id="detail">Looking for Node.js</span></p>
+        <div class="progress" aria-hidden="true"></div>
         <div class="tail" id="tail"></div>
         <div class="elapsed" id="elapsed">0:00</div>
+        <details class="log" id="logbox">
+          <summary id="log-toggle">Show startup log</summary>
+          <pre id="log"></pre>
+        </details>
         <p class="note" id="note">
-          On the portable build's first run the harness runtime is downloaded
-          (around 270&nbsp;MB). Later launches start in seconds.
+          On the portable build's first run the bundled runtime is unpacked
+          (around 310&nbsp;MB). Later launches start in seconds.
         </p>
       </div>
 
@@ -138,10 +208,23 @@
         var detailEl = document.getElementById("detail");
         var tailEl = document.getElementById("tail");
         var elapsedEl = document.getElementById("elapsed");
+        var logBox = document.getElementById("logbox");
+        var logEl = document.getElementById("log");
+        var logToggle = document.getElementById("log-toggle");
         var started = Date.now();
         var fetched = 0;
         var stage = "locating";
         var bubbles = 0;
+        var logLines = [];
+        var MAX_LOG_LINES = 1000;
+
+        function updateLogToggle() {
+          var verb = logBox.open ? "Hide" : "Show";
+          logToggle.textContent =
+            verb + " startup log (" + logLines.length + " lines)";
+        }
+
+        logBox.addEventListener("toggle", updateLogToggle);
 
         setInterval(function () {
           var s = Math.floor((Date.now() - started) / 1000);
@@ -178,6 +261,12 @@
           line = String(line);
           bubble();
           tailEl.textContent = line.length > 120 ? line.slice(-120) : line;
+
+          logLines.push(line);
+          if (logLines.length > MAX_LOG_LINES) logLines.shift();
+          logEl.textContent = logLines.join("\n");
+          if (logBox.open) logEl.scrollTop = logEl.scrollHeight;
+          updateLogToggle();
 
           if (line.indexOf("npm http") !== -1) {
             fetched++;

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Title bar</title>
+    <style>
+      :root { color-scheme: dark; --bg:#0f1115; --line:#262b36; --text:#8b93a0;
+              --hover:#1b1f28; --close:#e5484d; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 12px;
+        user-select: none;
+      }
+      header {
+        height: 100%;
+        display: flex;
+        align-items: stretch;
+        border-bottom: 1px solid var(--line);
+      }
+      .drag {
+        flex: 1;
+        cursor: default;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 10px;
+        color: #c8cfda;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+      }
+      .brand svg { display: block; opacity: 0.9; }
+
+      button {
+        appearance: none;
+        border: 0;
+        margin: 0;
+        padding: 0 12px;
+        height: 100%;
+        background: transparent;
+        color: #aab2bf;
+        cursor: default;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      button:hover { background: var(--hover); color: #e6e8eb; }
+      button.close:hover { background: var(--close); color: #fff; }
+      button svg { display: block; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand" data-tauri-drag-region="deep">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="#4d6bfe" aria-hidden="true">
+          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-1 15.5-4.5-4.5 1.4-1.4 3.1 3.1 6.6-6.6 1.4 1.4-8 8z"/>
+        </svg>
+        <span>DeepSeek Harness Desktop</span>
+      </div>
+      <div class="drag" data-tauri-drag-region="deep"></div>
+
+      <button id="menu" title="Menu" aria-label="Menu">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7"/>
+          <line x1="4" y1="12" x2="20" y2="12"/>
+          <line x1="4" y1="17" x2="20" y2="17"/>
+        </svg>
+      </button>
+
+      <button id="minimize" title="Minimize" aria-label="Minimize">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </button>
+      <button id="maximize" title="Maximize or restore" aria-label="Maximize or restore">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5" y="5" width="14" height="14" rx="1"/>
+        </svg>
+      </button>
+      <button id="close" class="close" title="Close" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="6" y1="6" x2="18" y2="18"/>
+          <line x1="18" y1="6" x2="6" y2="18"/>
+        </svg>
+      </button>
+    </header>
+
+    <script>
+      (function () {
+        var invoke = function (command, args) {
+          window.__TAURI_INTERNALS__.invoke(command, args).catch(function () {});
+        };
+
+        document.getElementById("menu").addEventListener("click", function () {
+          invoke("titlebar_menu");
+        });
+        document.getElementById("minimize").addEventListener("click", function () {
+          invoke("titlebar_window", { action: "minimize" });
+        });
+        document.getElementById("maximize").addEventListener("click", function () {
+          invoke("titlebar_window", { action: "maximize" });
+        });
+        document.getElementById("close").addEventListener("click", function () {
+          invoke("titlebar_window", { action: "close" });
+        });
+      })();
+    </script>
+  </body>
+</html>

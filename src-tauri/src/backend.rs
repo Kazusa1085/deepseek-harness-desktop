@@ -618,6 +618,12 @@ pub fn spawn_backend(
     let (mut cmd, budget) = build_command(&search_roots, bundled_node.as_deref())?;
     let description = describe(&cmd);
 
+    // The splash log opens with the one line that explains everything else:
+    // the exact command being run. It is throttled like any other progress
+    // line, and the log file records it too.
+    crate::logging::line(&format!("dsh-desktop: running {description}"));
+    on_progress(&format!("$ {description}"));
+
     // Run the server as its own process-group leader so `terminate_group` can
     // reap the bash/pwsh tool subprocesses it spawns later.
     #[cfg(unix)]

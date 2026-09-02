@@ -26,6 +26,16 @@ build is [0.1.7](#017--2026-08-26), pinned on the `stable` branch.
 - The command backing the panel refuses any caller that is not the panel
   webview, so the harness's own page cannot read the balance through the shared
   IPC bridge.
+- **The startup splash now shows an indeterminate progress bar with an
+  expandable log**, Ubuntu-installer style: the exact backend command and its
+  streamed output are one click away, and the last 1000 lines stay viewable.
+- **External links open in the system browser.** Same-origin navigation stays
+  in the app; `http`/`https`/`mailto`/`tel` destinations and `target="_blank"`
+  popups elsewhere are intercepted and handed to the desktop.
+- **Linux gets a custom title bar.** Native decorations and the
+  Edit/Window/Help menu are gone there; a separate app-local webview provides
+  window controls and a menu button for View / Troubleshooting. macOS and
+  Windows are unchanged.
 
 ### Notes
 

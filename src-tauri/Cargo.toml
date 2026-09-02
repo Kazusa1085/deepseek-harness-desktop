@@ -46,3 +46,10 @@ ureq = { version = "2", features = ["json", "tls"], default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Directly used by the Linux multi-webview layout: Tauri packs child webviews
+# into a vertical GTK box, so the shell reparents them into a gtk::Fixed that
+# honours x/y/w/h bounds.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+webkit2gtk = "2.0"

@@ -44,10 +44,11 @@ make that lifecycle reliable.
                               │      — same process group
 ```
 
-The shell owns **no application state**. There is no database, no settings
-file, and no Tauri IPC command exposed to the webview. Every piece of user
-state — sessions, API keys, model selection, plugins — lives inside the harness
-and is identical to what the browser version stores.
+The shell owns **no application state**. There is no database and no settings
+file of its own, and the only Tauri IPC commands are label-gated to the local
+status panel and the Linux title bar — never to the harness page. Every piece
+of user state — sessions, API keys, model selection, plugins — lives inside the
+harness and is identical to what the browser version stores.
 
 ## Startup sequence
 
@@ -148,7 +149,11 @@ console window appears on Windows) and calls `dsh_desktop_lib::run()`.
   double-kill.
 - **`create_main_window`** — parses the announced URL and builds the window
   with `WebviewUrl::External`. Parse failures are surfaced as
-  `io::ErrorKind::InvalidInput` rather than panicking.
+  `io::ErrorKind::InvalidInput` rather than panicking. On Linux the window is
+  undecorated and a third child webview (`titlebar`) hosts the window controls;
+  on other platforms the native decorations remain. The harness webview has a
+  navigation handler that keeps loopback traffic inside and sends external
+  links to the system browser.
 - **`run`** — wires the setup hook, builds the app, and registers the
   `RunEvent::Exit` handler.
 
@@ -201,10 +206,18 @@ since it changes the conditions of the run.
 
 ### `src/index.html`
 
-A static fallback page referenced by `build.frontendDist`. Tauri requires a
-frontend directory to exist; in practice this page is almost never shown,
-because the main window loads the external harness URL instead. It renders a
-pulsing indicator and one line of explanatory text.
+The startup splash, shown while the backend resolves and announces its URL.
+It renders an indeterminate progress bar, a one-line status tail, and a
+collapsed `<details>` log — the same "progress by default, expand for the full
+stream" pattern an OS installer uses. Backend output is appended via
+`window.dshProgress` and kept to the last 1000 lines.
+
+### `src/titlebar.html`
+
+The custom title bar webview, built on Linux only. It is a drag region
+(`data-tauri-drag-region`) with minimize, maximize/restore, and close buttons
+backed by the label-checked `titlebar_window` command, plus a menu button that
+pops up the same View / Troubleshooting menu via `titlebar_menu`.
 
 ### `scripts/install-backend.mjs`
 
@@ -235,6 +248,23 @@ alternative — bundling a copy of the harness UI as `frontendDist` — would
 require keeping that copy in sync with upstream and would break the harness's
 own asset and WebSocket routing. Loading the server's own origin means the UI
 behaves exactly as it does in a browser.
+
+### External links go to the browser
+
+A navigation handler on the harness webview compares every destination against
+the backend's loopback origin. Same-origin navigation stays; `http`, `https`,
+`mailto` and `tel` destinations anywhere else are cancelled and passed to
+`xdg-open`/`open`/`cmd start`. New-window requests follow the same policy, so
+`target="_blank"` links cannot silently open another native window for a third
+party. Unknown schemes such as `data:` and `blob:` are left alone.
+
+### Custom title bar on Linux only
+
+Linux users get an undecorated window plus a 38-pixel app-local titlebar
+webview. The other platforms keep native decorations because macOS traffic
+lights and Windows snap affordances are genuinely useful there. The titlebar
+commands and the status-panel command all verify the calling webview label, so
+the harness page cannot drive the window or read the balance.
 
 ### `csp: null`
 
@@ -311,7 +341,7 @@ as a last-resort bootstrap that works on a machine with nothing but Node.
 | Backend spawns but never prints a URL | `recv_timeout` times out after 45 s; group killed; the resolved command and the last stderr lines are included in the error; exit `1`. |
 | Backend exits early (bad args, crash) | The channel disconnects when the reader thread ends; group killed; stderr tail reported; exit `1`. |
 | Announced URL is unparseable | `create_main_window` returns `Err`; backend shut down; exit `1`. |
-| App killed with a signal (`SIGTERM`, `SIGKILL`) | Neither `RunEvent::Exit` nor `Drop` runs, so the server is orphaned. `SIGKILL` cannot be handled at all; `SIGTERM` could be, but is not today. Closing the window — the normal path — tears everything down correctly. |
+| App killed with `SIGKILL` | No handler can run, so the server is orphaned. `SIGTERM`, `SIGINT` and `SIGHUP` are handled and take the backend's process group down before exiting. Closing the window — the normal path — tears everything down correctly. |
 
 All diagnostics are printed to stderr with a `dsh-desktop:` prefix.
 
