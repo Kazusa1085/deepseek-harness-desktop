@@ -1,0 +1,20 @@
+# Keeps the bundled harness visible instead of frozen.
+#
+# `backend/package.json` pins `@deepseek-ai/dsh` exactly (it has only ever
+# published pre-releases, and a caret range would also accept the next 0.2.x),
+# so without this file the runtime only ever moves when a human remembers to run
+# `cd backend && npm install --package-lock-only`. Dependabot turns that into a
+# reviewable PR, and the "Backend runtime" workflow installs, starts and checks
+# the harness on that PR before it can land.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(backend)"
+    labels:
+      - dependencies
+      - backend
