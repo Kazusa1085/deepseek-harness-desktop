@@ -162,28 +162,6 @@ fn extract_url(line: &str) -> Option<String> {
     Some(candidate.to_string())
 }
 
-/// Mask this run's launch token in a backend line before it reaches the log.
-///
-/// The ready line carries the credential that authenticates the window
-/// (`/?token=…`). The log file is what users attach to bug reports, so the
-/// secret is not written to it.
-fn redact_token(line: &str) -> String {
-    const KEY: &str = "token=";
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(pos) = rest.find(KEY) {
-        let (before, after) = rest.split_at(pos + KEY.len());
-        out.push_str(before);
-        let end = after
-            .find(|c: char| c.is_whitespace() || matches!(c, '&' | '#' | ')'))
-            .unwrap_or(after.len());
-        out.push_str("***");
-        rest = &after[end..];
-    }
-    out.push_str(rest);
-    out
-}
-
 /// Parse a Node version directory name (`v20.11.0`, `20.11.0`) into a sortable
 /// triple. Anything unparseable sorts last as `(0, 0, 0)`.
 fn parse_version(name: &str) -> (u32, u32, u32) {
@@ -471,8 +449,9 @@ fn build_command(
         return Ok((cmd, Budget::local()));
     }
 
-    // Last resort, and the path the portable build takes: `npx` fetches the
-    // harness before it can serve anything, so it gets the longer budget.
+    // Last resort: `npx` fetches the harness before it can serve anything, so
+    // it gets the longer budget. The portable build does NOT reach this path —
+    // it prepends its unpacked runtime to `search_roots`, which is found above.
     if let Some(npx) = find_tool("npx") {
         let mut cmd = command_at(&npx);
         cmd.args(["--yes", "@deepseek-ai/dsh@latest"]);
@@ -651,27 +630,54 @@ enum Event {
 ///   nobody is listening on the channel any more, and stopping there would
 ///   leave the pipes unread: the backend would block on its next 64 KB of
 ///   output, mid-session, long after everything looked healthy.
+///
+/// The second point is why the stream is read as bytes: `BufRead::lines()`
+/// yields `Err(InvalidData)` for a line that is not valid UTF-8, and the
+/// `map_while(Result::ok)` that used to be here ended the loop on the first
+/// such byte — one binary write from any tool the harness spawns would stop
+/// the drain for the rest of the session. Decoding lossily keeps it running.
 fn drain<R: Read + Send + 'static>(stream: R, tx: mpsc::Sender<Event>, scan_for_url: bool) {
     thread::spawn(move || {
         let mut listening = true;
-        for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            crate::logging::line(&format!("[dsh web] {}", redact_token(&line)));
+        read_lines_lossy(stream, |line| {
+            crate::logging::line(&format!("[dsh web] {line}"));
 
             if !listening {
-                continue;
+                return;
             }
             if scan_for_url {
-                if let Some(url) = extract_url(&line) {
+                if let Some(url) = extract_url(line) {
                     let _ = tx.send(Event::Url(url));
-                    continue;
+                    return;
                 }
             }
-            if tx.send(Event::Line(line)).is_err() {
+            if tx.send(Event::Line(line.to_string())).is_err() {
                 listening = false;
             }
-        }
+        });
         let _ = tx.send(Event::Closed);
     });
+}
+
+/// Feed one stream's lines to `on_line`, decoding each one lossily.
+///
+/// Reading bytes rather than `String`s is the point: invalid UTF-8 inside a
+/// line becomes U+FFFD instead of an error, so no single bad byte can end the
+/// loop. Only a genuine I/O error stops it — the caller still gets its
+/// `Closed` event.
+fn read_lines_lossy<R: Read>(reader: R, mut on_line: impl FnMut(&str)) {
+    let mut reader = BufReader::new(reader);
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        match reader.read_until(b'\n', &mut buffer) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        let text = String::from_utf8_lossy(&buffer);
+        on_line(text.trim_end_matches(['\n', '\r']));
+    }
 }
 
 /// Start the backend and block until it announces its URL.
@@ -716,7 +722,13 @@ pub fn spawn_backend(
         cmd.process_group(0);
     }
 
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // stdin is deliberately closed. A shell launched from a terminal inherits
+    // that terminal's stdin, which hands the harness — and every tool it
+    // spawns — the user's keystrokes, and makes TTY-dependent behaviour differ
+    // between a packaged launch and a source launch.
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| {
         format!("failed to start the DeepSeek Harness backend ({description}): {e}")
@@ -866,7 +878,7 @@ pub fn search_roots(app: &tauri::App) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_url, is_js_entry, parse_version, redact_token, strip_verbatim_prefix};
+    use super::{extract_url, is_js_entry, parse_version, read_lines_lossy, strip_verbatim_prefix};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -915,15 +927,24 @@ mod tests {
     }
 
     #[test]
-    fn redacts_the_launch_token_in_log_lines() {
+    fn keeps_draining_after_a_non_utf8_byte() {
+        // The bug this guards: `lines().map_while(Result::ok)` ended the loop
+        // on the first invalid UTF-8 byte, so one binary write from a tool the
+        // harness spawned left that pipe unread for the rest of the session.
+        let input: &[u8] = b"first\n\xff\xfe binary\r\n dsh web: http://127.0.0.1:1\nlast";
+        let mut lines: Vec<String> = Vec::new();
+        read_lines_lossy(input, |line| lines.push(line.to_string()));
+
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], "first");
+        // The binary line survives as replacement characters instead of
+        // aborting the drain, and the ready line behind it is still found.
+        assert!(lines[1].ends_with(" binary"));
         assert_eq!(
-            redact_token(
-                "dsh web: http://127.0.0.1:34733/?token=secret (LAN: http://10.0.0.2:34733/?token=secret)"
-            ),
-            "dsh web: http://127.0.0.1:34733/?token=*** (LAN: http://10.0.0.2:34733/?token=***)"
+            extract_url(lines[2].trim_start()),
+            Some("http://127.0.0.1:1".to_string())
         );
-        assert_eq!(redact_token("nothing to hide"), "nothing to hide");
-        assert_eq!(redact_token("token="), "token=***");
+        assert_eq!(lines[3], "last");
     }
 
     #[test]
