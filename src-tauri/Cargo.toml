@@ -1,6 +1,6 @@
 [package]
 name = "dsh-desktop"
-version = "0.2.0"
+version = "0.2.1"
 description = "DeepSeek Harness desktop shell: a Tauri + Rust window around the dsh web GUI"
 authors = ["Alessandro Cyriaco"]
 edition = "2021"
@@ -56,3 +56,13 @@ libc = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 webkit2gtk = "2.0"
+
+# The release artifact is downloaded, installed and unpacked, and 34 % of the
+# unstripped binary was symbol tables (`strip` alone measured 4.66 MB off the
+# 13.7 MB file). `lto = "thin"` keeps most of the link-time benefit at a
+# fraction of fat LTO's build cost. `panic = "abort"` is deliberately left off:
+# `Backend`'s `Drop` is the cleanup backstop when nothing else runs.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true
