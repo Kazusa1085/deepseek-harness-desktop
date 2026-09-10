@@ -1,0 +1,70 @@
+name: Backend runtime
+
+# The harness is not part of the Rust build. `ci.yml` deliberately gives the
+# resource path an EMPTY `backend/node_modules` so tauri-build validates it
+# without downloading ~300 MB — which means no push or PR run has ever
+# installed, started, or checked the runtime this app actually ships, and the
+# one workflow that does install it (`build.yml`) is manual. A bundle carrying a
+# stale or unusable runtime would therefore ship silently.
+#
+# This workflow closes that gap. It installs the runtime exactly as the bundle
+# does (`npm ci` from the committed lockfile), starts the real `dsh web`, and
+# completes the per-run token handshake. It never builds or bundles anything.
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - scripts/install-backend.mjs
+      - scripts/check-backend.mjs
+      - .github/workflows/backend.yml
+  pull_request:
+    paths:
+      - backend/**
+      - scripts/install-backend.mjs
+      - scripts/check-backend.mjs
+      - .github/workflows/backend.yml
+  schedule:
+    # Mondays 06:17 UTC. The odd minute is deliberate: every cron in the world
+    # fires on the hour.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: Install and check the harness runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The runtime needs Node >= 22.15: it stores sessions with Zstd, and
+      # `node:zlib` only gained `createZstdDecompress` in 22.15.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # `npm ci` from the committed lockfile, then the assertion that the
+      # native pieces install scripts produce (node-pty, ripgrep, koffi) are
+      # actually there — npm 12 skips those scripts unless `allowScripts`
+      # names the exact version, which is what a harness bump breaks.
+      - name: Install the runtime
+        run: npm run backend:install
+
+      # Starts the harness on an ephemeral port and verifies the token
+      # handshake (303 plus the `dsh-auth-` cookie), so a tree that installs
+      # cleanly but cannot serve fails here instead of on a user's machine.
+      - name: Check the runtime starts and authenticates
+        run: npm run backend:check
+
+      # Informational: the pin is exact on purpose, so this is the only place a
+      # newer harness becomes visible without a human asking.
+      - name: Report newer harness versions
+        if: github.event_name == 'schedule'
+        working-directory: backend
+        run: npm outdated || true
