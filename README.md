@@ -69,7 +69,7 @@ xattr -dr com.apple.quarantine "/Applications/DeepSeek Harness Desktop.app"
 
 The harness already ships a complete web GUI served by `dsh web`. Rewriting that UI natively would mean maintaining a second implementation of every screen, and it would drift from upstream the moment the harness shipped a feature.
 
-This project takes the opposite approach: it is a **thin, boring wrapper**. Roughly 300 lines of Rust that:
+This project takes the opposite approach: it is a **thin, boring wrapper**. About 2,500 lines of Rust that:
 
 1. find a `dsh` backend,
 2. start it on a loopback port,
@@ -152,7 +152,7 @@ target machine.
 That makes `npm run backend:install` a build prerequisite:
 
 ```sh
-npm run backend:install   # populates backend/node_modules (~270 MB)
+npm run backend:install   # populates backend/node_modules (~296 MB)
 npm run build
 ```
 
@@ -232,12 +232,14 @@ src-tauri/                 Rust (Tauri) shell
 backend/                   the harness runtime (installed by `npm run backend:install`)
 src/index.html             startup splash shown inside the main window; progress bar plus an always-visible log terminal
 src/titlebar.html          the Linux custom title bar (window controls + menu)
+src/panel.html             the status panel webview (context, tokens, timings, balance)
 assets/deepseek-whale.svg  the DeepSeek whale mark used by the app icon
 scripts/
-  install-backend.mjs      installs @deepseek-ai/dsh into backend/
+  install-backend.mjs      installs @deepseek-ai/dsh into backend/, then asserts the native pieces landed
+  check-backend.mjs        starts the runtime and completes the token handshake
   make-icon.mjs            renders the whale mark into app-icon.png
 docs/                      architecture, development, configuration, troubleshooting
-.github/workflows/         CI (fmt, clippy, test, build) and release automation
+.github/workflows/         CI (fmt, clippy, test, build), the runtime check, and release automation
 ```
 
 ## Documentation
@@ -293,10 +295,12 @@ Startup failures are shown in the window itself, with the exact command that was
 - **Linux gets a custom title bar.** The native decorations (and their Edit/Window/Help menu) are disabled there, replaced by a separate app-local webview with window controls and a menu button that pops up the same View / Troubleshooting menu. macOS and Windows keep their native decorations.
 - **The port defaults to `0`.** The shell always reads the URL the server announces rather than assuming a port, so multiple instances coexist.
 - **Shutdown kills a process group, not a process.** The harness spawns shell tool subprocesses; killing only the server PID would strand them. On Unix the child is started as its own group leader and receives `SIGTERM` to the negated PID; on Windows the equivalent is `taskkill /T /F`.
-- **Node is found, not bundled.** Shipping a Node runtime would double the
-  download and pin users to one version. Instead the shell looks Node up the
-  way a shell would, plus the directories a GUI launcher hides — see
-  [Finding Node](#finding-node).
+- **Node is found, not bundled — except in the portable build.** The regular
+  bundles leave Node to the machine, so the download stays small and the user
+  keeps their own version; the shell looks it up the way a shell would, plus the
+  directories a GUI launcher hides — see [Finding Node](#finding-node). The
+  optional `portable` feature is the deliberate exception: it carries its own
+  Node and runtime inside the executable and unpacks them on first run.
 - **The shell is stateless.** No database and no config file of its own. The only IPC commands are the status-panel snapshot and the Linux title-bar controls, both restricted to their own app-local webviews; the harness page gets none. If a feature belongs to the agent, it belongs upstream in the harness.
 
 ## Known gaps

@@ -232,9 +232,19 @@ npm run build -- --bundles deb        # Linux .deb only
 
 ## `npm run backend:install` is slow or fails
 
-The harness has a large peer-dependency graph that npm resolves slowly. The
-script already prefers `pnpm`, then `bun`, then npm with `--legacy-peer-deps`.
-Installing pnpm is the single biggest improvement:
+Normally this is `npm ci` from the committed `backend/package-lock.json`, which
+does no dependency resolution at all — that lockfile exists because resolving
+this graph from scratch is genuinely expensive, and because
+`--legacy-peer-deps` (the usual workaround) silently drops peer dependencies the
+harness needs. If the install is slow or fails, first check that the lockfile is
+still there and matches `backend/package.json`:
+
+```sh
+ls backend/package-lock.json && (cd backend && npm ci --no-audit --no-fund)
+```
+
+Only when that lockfile is missing does the script fall back to `pnpm`, `bun`,
+or plain `npm install`:
 
 ```sh
 npm i -g pnpm && npm run backend:install

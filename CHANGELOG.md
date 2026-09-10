@@ -5,10 +5,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 0.2.0, in development
+## [Unreleased] — 0.2.1, in development
 
-`main` is the development line. Nothing here has shipped yet; the released
-build is [0.1.7](#017--2026-08-26), pinned on the `stable` branch.
+`main` is the development line. Nothing here has shipped yet; the most recent
+published build is [0.1.7](#017--2026-08-26).
 
 ### Added
 

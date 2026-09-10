@@ -161,8 +161,10 @@ console window appears on Windows) and calls `dsh_desktop_lib::run()`.
   `RunEvent::Exit` handler.
 
 Note that `tauri.conf.json` declares `"windows": []` — no window is created
-declaratively. The window is only built *after* the backend is ready, so the
-user never sees an empty frame pointed at nothing.
+declaratively. The window (with the splash webview) is built as soon as setup
+runs, and the harness and panel webviews are added to that same window once the
+backend announces its URL, so startup shows a progress log rather than an empty
+frame pointed at nothing.
 
 ### `src-tauri/src/backend.rs`
 
@@ -172,7 +174,7 @@ user never sees an empty frame pointed at nothing.
 | `ANNOUNCE_PREFIX` | `dsh web: ` — the exact prefix of the ready line the harness prints. |
 | `Backend` | Owns the `Child` plus its PID/PGID; implements `shutdown` and `Drop`. |
 | `extract_url` | Pulls the loopback URL out of the ready line, verbatim. Unit-tested. |
-| `redact_token` | Masks this run's `?token=` before a backend line reaches the log. Unit-tested. |
+| `read_lines_lossy` | Reads a pipe as bytes so one invalid UTF-8 line cannot end the drain. Unit-tested. |
 | `find_on_path` | `PATH` lookup that honours `.exe`/`.cmd`/`.bat` on Windows. |
 | `extra_bin_dirs` | Well-known install directories a GUI launcher does not put on `PATH`. |
 | `version_manager_bin_dirs` | nvm and fnm version directories, newest first. |
@@ -208,6 +210,28 @@ print. A GUI app has no console; without this, diagnosing anything meant asking
 the user to relaunch from a terminal — which is both awkward and misleading,
 since it changes the conditions of the run.
 
+Because it holds whatever the harness printed (prompts, tool output, paths) and
+users attach it to bug reports, the file is created private — `0600` inside a
+`0700` directory on unix — and every credential-looking value is masked in
+`line()`, the single write path. Redaction lives at that sink rather than at the
+call sites on purpose: the ready line carrying this run's `?token=` is both
+logged and forwarded to the failure report, and a call site that forgot would
+leak it. `redact` matches whole keys only (`token`, `access_token`, `api_key`,
+…) in query, `key: value`, JSON and url-encoded (`token%3D…`) forms, and is
+unit-tested against each of them plus the lookalikes it must leave alone
+(`max_tokens=`).
+
+### `src-tauri/src/usage.rs`
+
+The status panel's data. It reads the harness's own numbers —
+`~/.dsh/storages/session_projcache.json` (honouring `DSH_HOME`) for context,
+tokens, timings and session order — instead of estimating them, and fetches the
+account balance from `/user/balance` with the key the harness already stores,
+caching the result for five minutes (`BALANCE_TTL`). Both IPC commands it backs
+are gated on the calling webview's label, so the harness page cannot read either
+value. It also supplies `latest_session_id()`, which is what the launch-time
+resume seed uses.
+
 ### `src/index.html`
 
 The startup splash, shown as a child webview inside the main window while the
@@ -226,10 +250,16 @@ pops up the same View / Troubleshooting menu via `titlebar_menu`.
 
 ### `scripts/install-backend.mjs`
 
-Installs `@deepseek-ai/dsh` into `backend/node_modules`. It probes for
-`pnpm`, then `bun`, then falls back to `npm install --legacy-peer-deps` — the
-flag avoids npm's very slow ideal-tree resolution on the harness's peer
-dependency graph.
+Installs `@deepseek-ai/dsh` into `backend/node_modules`. With the committed
+`backend/package-lock.json` present — which it is, in this repository — that is
+always `npm ci`, so the exact tested package set is installed with no resolution
+step. Only without a lockfile does it probe `pnpm`, then `bun`, then plain
+`npm install`; it never passes `--legacy-peer-deps`, because that flag silently
+drops peer dependencies the harness needs and produces a tree that installs
+cleanly and dies at runtime. After a successful install it asserts that the
+native pieces produced by install scripts (node-pty's prebuild, ripgrep, koffi)
+are present and executable, because npm 12 only runs those scripts for packages
+named in `backend/package.json`'s `allowScripts`.
 
 ### `scripts/make-icon.mjs`
 
@@ -293,6 +323,14 @@ The reader thread keeps reading both pipes for the process's whole life, even
 after the URL is found. If it stopped, a full pipe buffer would block the
 server's next write and silently hang the harness. Post-announcement lines are
 echoed to stderr in debug builds only.
+
+"Forever" has one sharp edge worth naming: the loop must keep going even when a
+line is not valid UTF-8. `BufRead::lines()` reports such a line as an error, and
+an `Iterator::map_while(Result::ok)` around it ends the loop there — one binary
+write from any tool the harness spawned would stop the drain for the rest of the
+session, and a ready line behind that byte would turn into a misleading timeout.
+The reader therefore works on bytes (`read_until` + `String::from_utf8_lossy`),
+which is also what its unit test pins down.
 
 ### Looking beyond `PATH` for Node
 

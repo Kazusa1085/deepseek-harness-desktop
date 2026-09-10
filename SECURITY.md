@@ -141,7 +141,12 @@ for how to spot and stop an orphan.
 - The harness runtime is installed from npm at build time and is **not** vendored
   into this repository.
 - `backend/package-lock.json` is committed and installs go through `npm ci`, so
-  the package set is pinned by digest and every build is reproducible.
+  the package set is pinned by digest and a build is reproducible **as long as
+  that lockfile is committed and unchanged** — the shell's own runtime is pinned
+  exactly (`"@deepseek-ai/dsh": "0.1.5-rc.1"`) rather than by a range, precisely
+  so the manifest cannot resolve to a build nobody tested. The pnpm/bun/npm
+  fallbacks in `scripts/install-backend.mjs` discard the lockfile and only run
+  when it is absent.
 - The `npx --yes @deepseek-ai/dsh@latest` fallback downloads and executes the
   latest published harness. Convenient, but it is a network-fetch-and-run path:
   avoid it in hardened environments by installing the backend explicitly or

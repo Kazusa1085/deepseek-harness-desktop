@@ -159,7 +159,7 @@ documentation). Two consequences worth knowing:
 
 This is enabled by default, and it is why `npm run backend:install` must run
 before `npm run build`: the packaged app carries its own harness runtime
-(~270 MB) and needs no `dsh` on the target machine. Remove the entry to build a
+(~296 MB) and needs no `dsh` on the target machine. Remove the entry to build a
 slim app that resolves `dsh` at runtime instead.
 
 ### Notable settings in `tauri.conf.json`
@@ -175,9 +175,10 @@ slim app that resolves `dsh` at runtime instead.
 - **`withGlobalTauri: false`** — no `window.__TAURI__` is injected into the
   page. The harness UI is unmodified web content and must not gain ambient
   access to native APIs.
-- **`windows: []`** — no window is declared. `lib.rs` builds the window
-  programmatically *after* the backend announces its URL, so no empty frame is
-  ever shown.
+- **`windows: []`** — no window is declared. `lib.rs` builds the window (with
+  its splash webview) as soon as setup runs and adds the harness and panel
+  webviews to it once the backend announces its URL, so startup shows the
+  progress log instead of an empty frame.
 - **`csp: null`** — see [SECURITY.md](../SECURITY.md) for why, and what it
   trades away.
 
@@ -220,7 +221,9 @@ env -u DSH_DESKTOP_BACKEND npm run dev
 **Pin a specific Node version**
 
 ```sh
-DSH_DESKTOP_NODE="$HOME/.nvm/versions/node/v20.11.0/bin/node" npm run dev
+# 22.15 or newer: the harness stores sessions with Zstd, and node:zlib only
+# gained createZstdDecompress in 22.15. Adjust the path to your own nvm tree.
+DSH_DESKTOP_NODE="$HOME/.nvm/versions/node/v22.23.2/bin/node" npm run dev
 ```
 
 **Diagnose a backend that will not start**
