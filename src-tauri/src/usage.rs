@@ -28,7 +28,15 @@ use tokio::sync::Mutex;
 const BALANCE_TTL: Duration = Duration::from_secs(300);
 
 /// Where the harness keeps its state.
+///
+/// The harness resolves its own home from `DSH_HOME` first, so the shell has to
+/// look in the same place: hardcoding `$HOME/.dsh` shows "no sessions recorded
+/// yet" and "no API key found", and disables the session-resume seed, for every
+/// user who sets it.
 fn harness_dir() -> Option<PathBuf> {
+    if let Some(dir) = env::var_os("DSH_HOME").filter(|dir| !dir.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
     let home = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".dsh"))
 }
