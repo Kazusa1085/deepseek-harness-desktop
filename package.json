@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Native cross-platform desktop shell (Rust + Tauri v2) for the DeepSeek Harness web GUI",
   "license": "MIT",
   "author": "Alessandro Cyriaco",
@@ -26,10 +26,11 @@
   "scripts": {
     "tauri": "tauri",
     "backend:install": "node scripts/install-backend.mjs",
+    "backend:check": "node scripts/check-backend.mjs",
+    "backend:prune": "node scripts/prune-backend.mjs",
     "dev": "tauri dev",
     "build": "tauri build",
-    "setup": "npm install && npm run backend:install",
-    "backend:check": "node scripts/check-backend.mjs"
+    "setup": "npm install && npm run backend:install"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

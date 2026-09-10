@@ -162,3 +162,15 @@ if (result.status !== 0) {
 }
 
 assertNativePieces();
+
+// Last step, and it belongs here rather than in a one-off command: `npm ci`
+// restores every file the prune removes, so a tree pruned yesterday is a full
+// 296 MB tree again today. CI asserts the invariant with `--check`.
+const prune = spawnSync(process.execPath, [join(root, "scripts/prune-backend.mjs")], {
+  stdio: "inherit",
+});
+if (prune.error !== undefined) {
+  console.error(`[dsh-desktop] could not prune the runtime: ${prune.error.message}`);
+  process.exit(1);
+}
+process.exit(prune.status ?? 1);

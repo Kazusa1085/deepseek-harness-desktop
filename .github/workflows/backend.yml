@@ -59,8 +59,14 @@ jobs:
       # Starts the harness on an ephemeral port and verifies the token
       # handshake (303 plus the `dsh-auth-` cookie), so a tree that installs
       # cleanly but cannot serve fails here instead of on a user's machine.
+      # It runs on the PRUNED tree, which is what the bundle ships.
       - name: Check the runtime starts and authenticates
         run: npm run backend:check
+
+      # `npm ci` restores everything the prune removes, so this asserts the
+      # invariant the bundler depends on: what is on disk is what ships.
+      - name: The shipped runtime tree is pruned
+        run: npm run backend:prune -- --check
 
       # Informational: the pin is exact on purpose, so this is the only place a
       # newer harness becomes visible without a human asking.
