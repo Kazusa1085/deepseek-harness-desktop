@@ -48,6 +48,16 @@ build is [0.1.7](#017--2026-08-26), pinned on the `stable` branch.
 
 ### Fixed
 
+- **The window no longer lands on `401 dsh web authentication required`.** The
+  harness now prints a ready line whose loopback URL carries a per-run access
+  token (`dsh web: http://127.0.0.1:<port>/?token=…`) and answers the bare
+  origin with `401`. The shell used to rebuild the URL from the port digits
+  alone, discarding the query, so every launch failed at the token exchange.
+  The announced URL is now taken verbatim — which also keeps working if the
+  harness adds anything else to it — while the reader thread still ignores the
+  optional ` (LAN: …)` suffix. The same run token is now masked in the log file
+  (`token=***`), and `npm run backend:check` verifies the token handshake
+  instead of only spotting a port number.
 - **Balance lookups no longer block the UI.** The panel commands are async,
   the network request runs on Tauri's blocking thread pool, and automatic
   refreshes are single-flight with errors cached too.

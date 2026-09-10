@@ -96,7 +96,7 @@ Everything the user sees is upstream's UI. When the harness updates, the desktop
 ```
 
 1. The Rust shell resolves a backend command (see [Backend resolution](#backend-resolution)).
-2. It runs `dsh web --no-open --port 0` (`0` = the OS picks a free port), reading stdout for the line `dsh web: http://127.0.0.1:<port>`.
+2. It runs `dsh web --no-open --port 0` (`0` = the OS picks a free port), reading stdout for the ready line `dsh web: http://127.0.0.1:<port>/?token=<token>`. The URL is used exactly as printed: the harness mints a fresh token per run and answers the bare origin with `401`.
 3. The main window is already open showing the splash page; once that line
    appears, the splash webview is hidden and the harness and status panel
    webviews take its place in the same window.

@@ -96,7 +96,7 @@ points at a path that no longer exists.
 
 ### `backend did not become ready within 45s`
 
-The backend started but never printed `http://127.0.0.1:<port>`. Common causes:
+The backend started but never printed its `dsh web: …` ready line. Common causes:
 
 - The `npx` bootstrap is downloading on a slow connection. It is allowed 150
   seconds of complete silence and reports each package it fetches, so if the
@@ -144,16 +144,21 @@ and what it reported.
 ## The window is blank or shows the fallback page
 
 The fallback page ("Starting DeepSeek Harness…") means the window was created
-but could not load the harness URL. Check that the server is really listening:
+but could not load the harness URL. Check that the server is really listening,
+using the URL the backend printed — its `?token=` query is part of the address,
+not decoration:
 
 ```sh
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<port>
+curl -sS -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:<port>/?token=<token>'
 ```
 
-If that fails, the server died after announcing. If it succeeds but the window
-stays blank, the webview failed to render — on Linux this is almost always a
-missing or mismatched `webkit2gtk` version; on Windows, a missing WebView2
-runtime.
+The harness answers `303` for that URL and `401 dsh web authentication
+required` for the same origin with the query stripped. A bare-origin `401`
+therefore only proves the server is alive; a **window** showing that text means
+the shell loaded the URL without its token. If the request fails outright, the
+server died after announcing. If it succeeds but the window stays blank, the
+webview failed to render — on Linux this is almost always a missing or
+mismatched `webkit2gtk` version; on Windows, a missing WebView2 runtime.
 
 ## Features fail partway through a session (`Failed to fetch`)
 
@@ -261,8 +266,11 @@ Run the backend directly, exactly as the shell would:
 node backend/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port 0
 ```
 
-- **It prints `dsh web: http://127.0.0.1:<port>` and the UI works in a
-  browser** → the harness is fine; the problem is in this shell. Please
+Open the printed URL exactly as it appears — stripping `?token=` gives the
+harness's own `401` page, which is not a harness failure.
+
+- **It prints `dsh web: http://127.0.0.1:<port>/?token=…` and the UI works in
+  a browser** → the harness is fine; the problem is in this shell. Please
   [open an issue](https://github.com/AleCyriaco/deepseek-harness-desktop/issues) with your OS,
   the stderr output, and the steps you took.
 - **It fails, or the UI misbehaves in the browser too** → the problem is

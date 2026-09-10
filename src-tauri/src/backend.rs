@@ -80,8 +80,12 @@ impl Budget {
     }
 }
 
-/// The exact prefix the web app prints when it is listening.
-const URL_PREFIX: &str = "http://127.0.0.1:";
+/// The exact prefix of the ready line the web app prints when it is listening.
+///
+/// The whole line is `dsh web: http://127.0.0.1:<port>/?token=<token>`, with an
+/// optional ` (LAN: http://<lan-ip>:<port>/?token=<token>)` suffix. Older
+/// harness builds print the same line without the `?token=` query.
+const ANNOUNCE_PREFIX: &str = "dsh web: ";
 
 /// Windows process creation flag: run the child without giving it a console.
 ///
@@ -134,17 +138,50 @@ impl Drop for Backend {
     }
 }
 
-/// Extract `http://127.0.0.1:<port>` from a stdout line such as
-/// `dsh web: http://127.0.0.1:54321`.
+/// Extract the loopback URL from the ready line, such as
+/// `dsh web: http://127.0.0.1:54321/?token=<token>` or
+/// `dsh web: http://127.0.0.1:54321 (LAN: http://192.168.1.5:54321)`.
+///
+/// The URL is returned **verbatim**: the first whitespace-delimited token after
+/// the announcement, which also drops the optional ` (LAN: …)` suffix. Passing
+/// the printed string through unchanged is the point — the harness mints a
+/// fresh `?token=` per run and answers the bare origin with `401 dsh web
+/// authentication required`, so rebuilding the URL from its parts (as this used
+/// to, keeping only the port digits) breaks the window. Anything the harness
+/// adds to that URL later keeps working for the same reason.
 fn extract_url(line: &str) -> Option<String> {
-    let pos = line.find(URL_PREFIX)?;
-    let rest = &line[pos + URL_PREFIX.len()..];
-    let port: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if port.is_empty() {
-        None
-    } else {
-        Some(format!("{URL_PREFIX}{port}"))
+    let rest = line.trim_start().strip_prefix(ANNOUNCE_PREFIX)?;
+    let candidate = rest.split_whitespace().next()?;
+    let url = url::Url::parse(candidate).ok()?;
+    if url.scheme() != "http" || url.port().is_none() {
+        return None;
     }
+    if !matches!(url.host_str(), Some("127.0.0.1") | Some("localhost")) {
+        return None;
+    }
+    Some(candidate.to_string())
+}
+
+/// Mask this run's launch token in a backend line before it reaches the log.
+///
+/// The ready line carries the credential that authenticates the window
+/// (`/?token=…`). The log file is what users attach to bug reports, so the
+/// secret is not written to it.
+fn redact_token(line: &str) -> String {
+    const KEY: &str = "token=";
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(pos) = rest.find(KEY) {
+        let (before, after) = rest.split_at(pos + KEY.len());
+        out.push_str(before);
+        let end = after
+            .find(|c: char| c.is_whitespace() || matches!(c, '&' | '#' | ')'))
+            .unwrap_or(after.len());
+        out.push_str("***");
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Parse a Node version directory name (`v20.11.0`, `20.11.0`) into a sortable
@@ -618,7 +655,7 @@ fn drain<R: Read + Send + 'static>(stream: R, tx: mpsc::Sender<Event>, scan_for_
     thread::spawn(move || {
         let mut listening = true;
         for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            crate::logging::line(&format!("[dsh web] {line}"));
+            crate::logging::line(&format!("[dsh web] {}", redact_token(&line)));
 
             if !listening {
                 continue;
@@ -829,7 +866,7 @@ pub fn search_roots(app: &tauri::App) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_url, is_js_entry, parse_version, strip_verbatim_prefix};
+    use super::{extract_url, is_js_entry, parse_version, redact_token, strip_verbatim_prefix};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -841,17 +878,52 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_launch_token_query() {
+        // The bug this guards: the shell rebuilt the URL from the port digits
+        // alone, so the window loaded an unauthenticated origin and the server
+        // answered `401 dsh web authentication required`.
+        let line =
+            "dsh web: http://127.0.0.1:34733/?token=iHuI6D4zG02IcjGdcOQ36ujTCX6gDGMvZBUgCwPIjXE";
+        let expected = "http://127.0.0.1:34733/?token=iHuI6D4zG02IcjGdcOQ36ujTCX6gDGMvZBUgCwPIjXE";
+        assert_eq!(extract_url(line), Some(expected.to_string()));
+    }
+
+    #[test]
     fn extracts_url_with_lan_suffix() {
+        // The LAN URL is a separate whitespace-delimited token, so it is
+        // dropped without touching the token query of the loopback URL.
         assert_eq!(
-            extract_url("dsh web: http://127.0.0.1:50340 (LAN: http://192.168.1.5:50340)"),
-            Some("http://127.0.0.1:50340".to_string())
+            extract_url(
+                "dsh web: http://127.0.0.1:50340/?token=abc (LAN: http://192.168.1.5:50340/?token=abc)"
+            ),
+            Some("http://127.0.0.1:50340/?token=abc".to_string())
         );
     }
 
     #[test]
-    fn ignores_unrelated_lines() {
+    fn ignores_lines_that_are_not_the_announcement() {
         assert_eq!(extract_url("listening on 127.0.0.1"), None);
         assert_eq!(extract_url(""), None);
+        assert_eq!(
+            extract_url("dsh web: opening the default browser; pass --no-open to disable"),
+            None
+        );
+        // Only our own loopback http origin is loaded into the webview.
+        assert_eq!(extract_url("dsh web: http://0.0.0.0:34733/?token=abc"), None);
+        assert_eq!(extract_url("dsh web: https://127.0.0.1:34733/?token=abc"), None);
+        assert_eq!(extract_url("dsh web: http://127.0.0.1/?token=abc"), None);
+    }
+
+    #[test]
+    fn redacts_the_launch_token_in_log_lines() {
+        assert_eq!(
+            redact_token(
+                "dsh web: http://127.0.0.1:34733/?token=secret (LAN: http://10.0.0.2:34733/?token=secret)"
+            ),
+            "dsh web: http://127.0.0.1:34733/?token=*** (LAN: http://10.0.0.2:34733/?token=***)"
+        );
+        assert_eq!(redact_token("nothing to hide"), "nothing to hide");
+        assert_eq!(redact_token("token="), "token=***");
     }
 
     #[test]

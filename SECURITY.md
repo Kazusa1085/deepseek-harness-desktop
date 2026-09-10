@@ -21,7 +21,7 @@ window is allowed to load.
 | Property | Value |
 |---|---|
 | Network exposure | The shell opens no sockets. The server it starts binds `127.0.0.1` on an OS-assigned port. |
-| Window origin | Only `http://127.0.0.1:<port>` — the URL announced by the process the shell itself started. Navigation away from that origin is cancelled; external `http`/`https`/`mailto`/`tel` links are opened in the system browser instead. |
+| Window origin | Only the loopback URL announced by the process the shell itself started, used verbatim — including the per-run `?token=` query that URL now carries (a fresh secret per run, never persisted, masked in the log). Navigation away from that origin is cancelled; external `http`/`https`/`mailto`/`tel` links are opened in the system browser instead. |
 | Native API exposure | `withGlobalTauri: false` and no plugins. Three app-defined IPC commands exist — `usage_snapshot` (status panel only), `titlebar_menu` and `titlebar_window` (Linux title bar only) — and each checks the calling webview's label. The remote harness page has no IPC access. |
 | Persisted secrets | None. The shell stores no credential of its own. |
 | Credentials read | The status panel reads `DEEPSEEK_API_KEY` from the harness's own `~/.dsh/.credentials.yaml` to call `/user/balance`. Read-only, never copied, never logged. |
@@ -114,9 +114,13 @@ design. Treat the harness as the security boundary.
 ### Untrusted input
 
 The only input the shell parses is the backend's stdout. `extract_url` accepts
-nothing but `http://127.0.0.1:` followed by ASCII digits — a malicious line
-cannot redirect the window to another host or port scheme. The resulting string
-is then parsed by the `url` crate before the window is built.
+nothing but the `dsh web: ` ready line, and from it only a single
+whitespace-delimited token that must parse as an absolute `http` URL whose host
+is `127.0.0.1` or `localhost` and that carries an explicit port — a malicious
+line cannot redirect the window to another host, scheme or a default port. The
+accepted token is the URL the harness printed, passed through verbatim (it now
+carries a per-run `?token=` and the shell must not rebuild it), and it is parsed
+by the `url` crate before the window is built.
 
 `DSH_DESKTOP_BACKEND` is treated as a trusted local path: it is a single path,
 never shell-parsed, but anyone who can set it can already run arbitrary code as

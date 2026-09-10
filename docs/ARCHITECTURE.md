@@ -81,8 +81,11 @@ harness and is identical to what the browser version stores.
    │                                          ├─ spawn with piped stdout/stderr
    │                                          │
    │                                          ├─ reader thread
-   │                                          │    scans stdout for
-   │                                          │    "http://127.0.0.1:<digits>"
+   │                                          │    scans stdout for the
+   │                                          │    "dsh web: <url>" ready line
+   │                                          │    and keeps the URL verbatim
+   │                                          │    (its ?token= query is this
+   │                                          │    run's GUI credential)
    │                                          │    sends the first match over
    │                                          │    an mpsc channel, then keeps
    │                                          │    draining both pipes forever
@@ -166,9 +169,10 @@ user never sees an empty frame pointed at nothing.
 | Item | Responsibility |
 |---|---|
 | `READY_TIMEOUT` | 45 s budget for the server to announce itself. |
-| `URL_PREFIX` | `http://127.0.0.1:` — the exact prefix the harness prints. |
+| `ANNOUNCE_PREFIX` | `dsh web: ` — the exact prefix of the ready line the harness prints. |
 | `Backend` | Owns the `Child` plus its PID/PGID; implements `shutdown` and `Drop`. |
-| `extract_url` | Pulls the loopback URL out of a stdout line. Unit-tested. |
+| `extract_url` | Pulls the loopback URL out of the ready line, verbatim. Unit-tested. |
+| `redact_token` | Masks this run's `?token=` before a backend line reaches the log. Unit-tested. |
 | `find_on_path` | `PATH` lookup that honours `.exe`/`.cmd`/`.bat` on Windows. |
 | `extra_bin_dirs` | Well-known install directories a GUI launcher does not put on `PATH`. |
 | `version_manager_bin_dirs` | nvm and fnm version directories, newest first. |

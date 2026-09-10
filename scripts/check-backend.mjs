@@ -59,12 +59,33 @@ const timer = setTimeout(
   TIMEOUT_MS,
 );
 
+// Readiness is not "a port number appeared": the harness mints a per-run
+// `?token=` and answers the bare origin with `401 dsh web authentication
+// required`. The printed URL is therefore the only thing worth checking, and it
+// has to be used exactly as printed — which is also what the Rust shell does.
+async function verifyReady(url) {
+  try {
+    const response = await fetch(url, { redirect: "manual" });
+    const cookie = response.headers.get("set-cookie") ?? "";
+    if (response.status === 303 && /dsh-auth-/.test(cookie)) {
+      finish(0, `backend ready at ${new URL(url).origin} (token handshake ok)`);
+    } else if (response.status === 200) {
+      // Older harness builds announce a token-free URL and serve it directly.
+      finish(0, `backend ready at ${new URL(url).origin} (no token required)`);
+    } else {
+      finish(1, `the announced URL did not authenticate the browser session (HTTP ${response.status})`);
+    }
+  } catch (error) {
+    finish(1, `could not reach the announced URL: ${error.message}`);
+  }
+}
+
 for (const stream of [child.stdout, child.stderr]) {
   stream.setEncoding("utf8");
   stream.on("data", (chunk) => {
     output.push(chunk);
-    const match = /http:\/\/127\.0\.0\.1:(\d+)/.exec(chunk);
-    if (match) finish(0, `backend ready on port ${match[1]}`);
+    const match = /dsh web: (https?:\/\/\S+)/.exec(output.join(""));
+    if (match !== null && !settled) verifyReady(match[1]);
   });
 }
 

@@ -232,5 +232,7 @@ the arguments:
 node backend/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port 0
 ```
 
-If that prints `dsh web: http://127.0.0.1:<port>`, the shell will work; if it
-does not, the problem is in the harness, not here.
+If that prints `dsh web: http://127.0.0.1:<port>/?token=…`, the shell will work;
+if it does not, the problem is in the harness, not here. Open the URL exactly as
+printed — without its `?token=` query the server answers
+`401 dsh web authentication required`, so a hand-trimmed URL is not a valid test.
