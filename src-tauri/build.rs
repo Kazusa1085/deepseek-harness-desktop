@@ -1,14 +1,45 @@
 //! Build script.
 //!
-//! Besides the usual Tauri codegen, this packs the portable payload when the
-//! `portable` feature is on: the harness runtime and a Node interpreter, in a
-//! single compressed blob the binary embeds and unpacks on first run.
+//! Besides the usual Tauri codegen, this publishes the harness version the shell
+//! is pinned to and — when the `portable` feature is on — packs the payload: the
+//! harness runtime and a Node interpreter, in a single compressed blob the
+//! binary embeds and unpacks on first run.
 
 fn main() {
+    pinned_harness_version();
+
     #[cfg(feature = "portable")]
     portable::pack();
 
     tauri_build::build()
+}
+
+/// Publish the harness version the runtime is pinned to, read from the one file
+/// that declares it.
+///
+/// `backend/package.json` is the single source of truth: the bundled runtime is
+/// installed from its lockfile, and the `npx` fallback at the end of backend
+/// resolution runs `@deepseek-ai/dsh@<that version>` instead of `@latest`. The
+/// difference is not cosmetic — a harness release can change the session format
+/// generation, and every stored session then has to be migrated, so the shell
+/// must not adopt a new one by accident.
+fn pinned_harness_version() {
+    const MANIFEST: &str = "../backend/package.json";
+    println!("cargo:rerun-if-changed={MANIFEST}");
+
+    let text = std::fs::read_to_string(MANIFEST)
+        .unwrap_or_else(|error| panic!("cannot read {MANIFEST}: {error}"));
+    let version = text
+        .split("\"@deepseek-ai/dsh\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').nth(1))
+        .unwrap_or_else(|| panic!("{MANIFEST} does not name a version for @deepseek-ai/dsh"));
+    assert!(
+        !version.is_empty() && !version.starts_with(['^', '~', '>', '<', '*']),
+        "{MANIFEST} must pin @deepseek-ai/dsh exactly, got {version:?}"
+    );
+
+    println!("cargo:rustc-env=DSH_HARNESS_VERSION={version}");
 }
 
 #[cfg(feature = "portable")]
@@ -83,14 +114,23 @@ mod portable {
         }
     }
 
-    /// Write one record: path length, path, data length, data.
+    /// Write one record: path length, path, unix mode, data length, data.
     fn write_entry<W: Write>(sink: &mut W, source: &Path, name: &Path) -> io::Result<u64> {
         let text = name.to_string_lossy().replace('\\', "/");
         let bytes = text.as_bytes();
-        let size = source.metadata()?.len();
+        let metadata = source.metadata()?;
+        let size = metadata.len();
+        // The mode has to travel with the file: several executables live below
+        // the payload root (ripgrep, node-pty's spawn-helper, koffi), and
+        // `unpack` used to restore the bit for depth-1 entries only.
+        #[cfg(unix)]
+        let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions());
+        #[cfg(not(unix))]
+        let mode = 0u32;
 
         sink.write_all(&(bytes.len() as u32).to_le_bytes())?;
         sink.write_all(bytes)?;
+        sink.write_all(&mode.to_le_bytes())?;
         sink.write_all(&size.to_le_bytes())?;
 
         let mut file = BufReader::new(File::open(source)?);

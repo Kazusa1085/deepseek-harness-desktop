@@ -76,7 +76,11 @@ fn unpack(target: &Path, on_progress: &dyn Fn(&str)) -> Result<(), String> {
     let mut files = 0usize;
 
     loop {
-        // Each record is: u32 path length, path, u64 data length, data.
+        // Each record is: u32 path length, path, u32 unix mode, u64 data
+        // length, data. The mode travels with the file because the payload
+        // needs more than one executable — ripgrep's binary, node-pty's
+        // spawn-helper on macOS, koffi's module — and none of them sits at the
+        // payload root.
         let mut header = [0u8; 4];
         match archive.read_exact(&mut header) {
             Ok(()) => {}
@@ -89,6 +93,12 @@ fn unpack(target: &Path, on_progress: &dyn Fn(&str)) -> Result<(), String> {
             .map_err(|e| format!("reading the bundled runtime failed: {e}"))?;
         let name =
             String::from_utf8(name).map_err(|_| "the bundled runtime is corrupt".to_string())?;
+
+        let mut mode = [0u8; 4];
+        archive
+            .read_exact(&mut mode)
+            .map_err(|e| format!("reading the bundled runtime failed: {e}"))?;
+        let mode = u32::from_le_bytes(mode);
 
         let mut size = [0u8; 8];
         archive
@@ -116,11 +126,16 @@ fn unpack(target: &Path, on_progress: &dyn Fn(&str)) -> Result<(), String> {
         sink.flush()
             .map_err(|e| format!("could not write {}: {e}", path.display()))?;
 
+        // Restore the mode the file was packed with. A payload built on unix
+        // records real permissions; one built on Windows records zero, and the
+        // files there are identified by extension instead.
         #[cfg(unix)]
-        if !name.contains('/') {
+        if mode != 0 {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o755));
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(mode & 0o777));
         }
+        #[cfg(not(unix))]
+        let _ = mode;
 
         files += 1;
         if files % 250 == 0 {

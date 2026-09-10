@@ -464,7 +464,7 @@ fn add_web_args(cmd: &mut Command) {
 ///    `.js`/`.mjs`/`.cjs` entry run through `node`.
 /// 2. A bundled backend under `<root>/backend/node_modules/@deepseek-ai/dsh`.
 /// 3. `dsh` on `PATH` (or in a well-known install directory).
-/// 4. `npx --yes @deepseek-ai/dsh@latest`.
+/// 4. `npx --yes @deepseek-ai/dsh@<the pinned version>`.
 fn build_command(
     search_roots: &[PathBuf],
     bundled_node: Option<&Path>,
@@ -511,9 +511,16 @@ fn build_command(
     // Last resort: `npx` fetches the harness before it can serve anything, so
     // it gets the longer budget. The portable build does NOT reach this path —
     // it prepends its unpacked runtime to `search_roots`, which is found above.
+    //
+    // The version comes from `backend/package.json` at build time, not from
+    // `@latest`: a harness release can change the session format generation, and
+    // adopting one by accident means every stored session needs migrating.
     if let Some(npx) = find_tool("npx") {
         let mut cmd = command_at(&npx);
-        cmd.args(["--yes", "@deepseek-ai/dsh@latest"]);
+        cmd.args([
+            "--yes",
+            concat!("@deepseek-ai/dsh@", env!("DSH_HARNESS_VERSION")),
+        ]);
         // Without this npm is entirely silent while it downloads, which leaves
         // the user staring at a frozen window with no way to tell a slow
         // connection from a wedged process. At `http` it reports every package
