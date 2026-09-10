@@ -261,6 +261,22 @@ native pieces produced by install scripts (node-pty's prebuild, ripgrep, koffi)
 are present and executable, because npm 12 only runs those scripts for packages
 named in `backend/package.json`'s `allowScripts`.
 
+### `scripts/prune-backend.mjs`
+
+Drops what a bundle can never use: source maps, type declarations
+(`.d.ts`/`.d.mts`/`.d.cts`), package sources and documentation, Windows debug
+symbols, and other platforms' binaries (node-pty prebuilds, `@vscode/ripgrep-*`,
+`@koromix/koffi-*`, `@img/sharp-*`) — everything else, including test
+directories, is left alone on purpose. It exists because that content is most of
+the bundle: the runtime goes from ~296 MB / 25,395 files to ~144 MB / 10,639.
+
+It runs as the last step of `backend:install`, because `npm ci` restores every
+file it removed — a tree pruned yesterday is a full tree again today. `--check`
+reports without deleting, which is what CI asserts, and `DSH_BUNDLE_OSES`
+overrides the target platform for a cross-build. The safety net for the prune is
+ordering: the CI job starts the harness **after** pruning, so a prune that broke
+something fails there rather than on a user's machine.
+
 ### `scripts/make-icon.mjs`
 
 Generates `app-icon.png` (1024×1024) with no dependencies at all: a hand-rolled
@@ -289,9 +305,13 @@ behaves exactly as it does in a browser.
 A navigation handler on the harness webview compares every destination against
 the backend's loopback origin. Same-origin navigation stays; `http`, `https`,
 `mailto` and `tel` destinations anywhere else are cancelled and passed to
-`xdg-open`/`open`/`cmd start`. New-window requests follow the same policy, so
+`xdg-open`/`open`/`ShellExecuteW`. New-window requests follow the same policy, so
 `target="_blank"` links cannot silently open another native window for a third
 party. Unknown schemes such as `data:` and `blob:` are left alone.
+
+On Windows the hand-off is `ShellExecuteW`, not `cmd /C start`: the argument is
+a link the harness page rendered, and `cmd.exe` re-parses `&`, `|`, `^` and
+`%VAR%` in it, so page content would decide whether a second command runs.
 
 ### Custom title bar on Linux only
 
@@ -362,8 +382,9 @@ Every process the shell spawns is created with `CREATE_NO_WINDOW`. Without it,
 a GUI application that starts a console program — and `node.exe` is one — has a
 console window allocated for it by the OS. It appears beside the app window and
 stays for the whole session. The same flag is applied to `taskkill` during
-teardown and to `cmd.exe` when opening the log, which would otherwise flash a
-window each time.
+teardown. Opening a path or URL no longer goes through `cmd.exe` at all (see
+[External links go to the browser](#external-links-go-to-the-browser)), so it
+cannot flash a window either.
 
 It does not affect the pipes: stdout and stderr are inherited handles,
 independent of whether the child owns a console.

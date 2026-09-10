@@ -46,6 +46,32 @@ published build is [0.1.7](#017--2026-08-26).
   the shell now seeds that selection from the session cache before the page
   boots.
 
+### Changed
+
+- **The bundled runtime ships pruned.** `npm run backend:install` now ends by
+  removing what a bundle can never use — source maps, type declarations, package
+  sources and documentation, Windows debug symbols, and other platforms'
+  binaries. Measured here: `backend/node_modules` goes from ~296 MB / 25,395
+  files to ~144 MB / 10,639, and the Linux download from 55.7 MB to about 45 MB.
+  The new CI job installs, prunes and then **starts** the harness from the pruned
+  tree, so the prune cannot quietly break the runtime.
+- **The release binary is stripped and thin-LTO'd:** 13,716,184 B → 7,900,200 B
+  (-42.4 %) with `strip`, `lto = "thin"` and `codegen-units = 1`.
+- **The harness is pinned exactly** (`0.1.5-rc.1`) instead of by a caret range
+  that also accepted the next 0.2.x, the lockfile that was sitting uncommitted in
+  the working tree is now committed, and Dependabot watches `backend/` weekly.
+
+### Added
+
+- **A CI job that installs, starts and checks the harness runtime**
+  (`.github/workflows/backend.yml`), triggered by `backend/**` changes, weekly,
+  and on demand. Until now no push or PR run had ever installed the runtime this
+  app actually ships — `ci.yml` deliberately gives the resource path an empty
+  directory — so a stale or unusable runtime would have shipped silently.
+- `npm run backend:install` asserts the native pieces install scripts produce
+  (node-pty's prebuild, ripgrep, koffi) and fails loudly when they are missing,
+  which is what a harness bump does under npm 12's `allowScripts` policy.
+
 ### Fixed
 
 - **The window no longer lands on `401 dsh web authentication required`.** The
@@ -61,6 +87,26 @@ published build is [0.1.7](#017--2026-08-26).
 - **Balance lookups no longer block the UI.** The panel commands are async,
   the network request runs on Tauri's blocking thread pool, and automatic
   refreshes are single-flight with errors cached too.
+- **The backend's output is never abandoned mid-session.** The reader thread
+  ended on the first byte that was not valid UTF-8 (`lines()` reports such a
+  line as an error), leaving that pipe unread for the rest of the session — one
+  binary write from any tool the harness spawned could hang it on a full 64 KB
+  buffer. Both pipes are read as bytes now and decoded lossily.
+- **Credentials are masked at the log sink, and the log is private.** Masking
+  sat at a single call site, so the head/tail failure report — which forwards the
+  raw line, token and all — bypassed it, and the matcher knew only the literal
+  `token=` form. `logging::line` now masks whole keys (`token`, `access_token`,
+  `api_key`, …) in query, `key: value`, JSON and url-encoded forms, and the file
+  is created `0600` inside a `0700` directory.
+- **`DSH_HOME` is honoured.** The status panel, the account card and the
+  launch-time resume seed read `$HOME/.dsh` directly, so a harness configured
+  with `DSH_HOME` reported no sessions and no API key.
+- **External links no longer go through a shell on Windows.** `cmd /C start
+  <link>` re-parses `&`, `|`, `^` and `%VAR%` in an argument the harness page
+  controls; the hand-off now uses `ShellExecuteW`. The same reasoning removed the
+  manual `cmd /C` wrapper around batch programs (`npx.cmd`), which `std` has
+  invoked safely since 1.77.2 — the wrapper also broke on program paths that
+  contain spaces.
 - **Closing the window during startup no longer orphans the backend.** The
   child is registered for teardown the moment it spawns, before it announces
   its URL, and a late startup success cannot open a window for an exiting app.

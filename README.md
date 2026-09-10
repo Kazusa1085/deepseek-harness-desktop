@@ -152,7 +152,7 @@ target machine.
 That makes `npm run backend:install` a build prerequisite:
 
 ```sh
-npm run backend:install   # populates backend/node_modules (~296 MB)
+npm run backend:install   # installs the runtime (~296 MB), then prunes it to ~144 MB
 npm run build
 ```
 
