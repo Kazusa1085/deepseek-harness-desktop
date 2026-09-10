@@ -38,6 +38,14 @@
     "longDescription": "Runs the DeepSeek Harness web GUI in a native window, backed by the stock `dsh web` server started as a child process.",
     "macOS": {
       "minimumSystemVersion": "10.15"
+    },
+    "linux": {
+      "rpm": {
+        "compression": {
+          "type": "xz",
+          "level": 9
+        }
+      }
     }
   }
 }
