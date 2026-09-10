@@ -14,7 +14,7 @@ use std::{
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -104,10 +104,19 @@ const EXE_EXTS: &[&str] = &[""];
 
 /// A live `dsh web` process plus enough state to kill its whole tree later.
 pub struct Backend {
-    child: Child,
+    process: Arc<Mutex<BackendProcess>>,
     /// Process id; on unix this doubles as the process-group id because the
     /// child is started as its own group leader.
     pid: u32,
+}
+
+/// The child and what is known about its lifetime, shared with the supervisor.
+struct BackendProcess {
+    /// The child, or `None` once it has been reaped.
+    child: Option<Child>,
+    /// Whether the child is known to be gone. Once it is, its pid may belong to
+    /// an unrelated process, so nothing may signal it.
+    exited: bool,
 }
 
 impl Backend {
@@ -118,12 +127,73 @@ impl Backend {
         // late signal must not take an unrelated process with it.
         #[cfg(unix)]
         BACKEND_PGID.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        let Some(mut child) = self.take_for_termination() else {
+            return;
+        };
         terminate_group(self.pid);
         // Give the Cordis host a beat to flush, then hard-kill what remains.
         thread::sleep(Duration::from_millis(600));
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = child.kill();
+        let _ = child.wait();
     }
+
+    /// Take the child for termination, marking the slot done.
+    ///
+    /// `None` means there is nothing left to signal — the supervisor already
+    /// reaped it, or a previous shutdown took it. Signalling that pid anyway
+    /// risks hitting whichever process inherited the number.
+    fn take_for_termination(&self) -> Option<Child> {
+        let mut process = self.process.lock().ok()?;
+        if process.exited {
+            return None;
+        }
+        process.exited = true;
+        process.child.take()
+    }
+}
+
+/// Reap the child when it exits, and say so in the log.
+///
+/// Without this nothing ever calls `wait()` on the success path, so a backend
+/// that dies mid-session stays a zombie while the window shows a dead page.
+/// Supervising it is the smallest version of that fix: the death becomes
+/// visible and the pid is retired. Restarting the server — which means telling
+/// the UI — is a separate change.
+fn supervise(process: Arc<Mutex<BackendProcess>>, pid: u32) {
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(500));
+
+        let status = {
+            let Ok(mut process) = process.lock() else {
+                return;
+            };
+            match process.child.as_mut() {
+                Some(child) => child.try_wait(),
+                None => return,
+            }
+        };
+
+        match status {
+            Ok(None) => {}
+            Ok(Some(status)) => {
+                if let Ok(mut process) = process.lock() {
+                    process.child = None;
+                    process.exited = true;
+                }
+                crate::logging::line(&format!(
+                    "dsh-desktop: the backend (pid {pid}) exited: {status}"
+                ));
+                return;
+            }
+            Err(error) => {
+                crate::logging::line(&format!(
+                    "dsh-desktop: could not wait for the backend (pid {pid}): {error}"
+                ));
+                return;
+            }
+        }
+    });
 }
 
 impl Drop for Backend {
@@ -133,8 +203,12 @@ impl Drop for Backend {
         clear_pending();
         #[cfg(unix)]
         BACKEND_PGID.store(0, std::sync::atomic::Ordering::SeqCst);
+        let Some(mut child) = self.take_for_termination() else {
+            return;
+        };
         terminate_group(self.pid);
-        let _ = self.child.kill();
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -795,7 +869,14 @@ pub fn spawn_backend(
         Ok(url) => {
             // `mark_pending` already published the pgid/pid, so signals and an
             // early-exit kill stay effective until `BackendState` takes over.
-            Ok((Backend { child, pid }, url))
+            // The supervisor starts before that hand-off, so a death during it
+            // is still observed.
+            let process = Arc::new(Mutex::new(BackendProcess {
+                child: Some(child),
+                exited: false,
+            }));
+            supervise(Arc::clone(&process), pid);
+            Ok((Backend { process, pid }, url))
         }
         Err(reason) => {
             clear_pending();
@@ -863,8 +944,47 @@ pub fn search_roots(app: &tauri::App) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_url, is_js_entry, parse_version, read_lines_lossy, strip_verbatim_prefix};
+    use super::{
+        extract_url, is_js_entry, parse_version, read_lines_lossy, strip_verbatim_prefix, supervise,
+        BackendProcess,
+    };
     use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    /// The supervisor is what turns "the backend died" into a reaped pid and a
+    /// log line instead of a zombie and a dead window.
+    #[test]
+    fn the_supervisor_reaps_a_child_that_exits() {
+        #[cfg(unix)]
+        let child = Command::new("true")
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn a short-lived child");
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit 0"])
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn a short-lived child");
+
+        let process = Arc::new(Mutex::new(BackendProcess {
+            child: Some(child),
+            exited: false,
+        }));
+        supervise(Arc::clone(&process), 0);
+
+        // It polls every 500 ms; allow a few rounds before giving up.
+        for _ in 0..20 {
+            if process.lock().expect("lock").exited {
+                return;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        panic!("the supervisor never observed the child's exit");
+    }
 
     #[test]
     fn extracts_announced_loopback_url() {
