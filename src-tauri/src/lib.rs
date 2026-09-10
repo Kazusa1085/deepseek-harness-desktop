@@ -319,30 +319,85 @@ impl BackendState {
 /// Open a path or URL with whatever the desktop uses for it.
 ///
 /// One implementation serves both the log-file menu items and the link
-/// interceptor: `xdg-open`/`open`/`cmd start` all accept paths and URLs alike.
-/// The value is passed as a single argument, never through a shell.
+/// interceptor: `xdg-open`/`open`/`ShellExecuteW` all accept paths and URLs
+/// alike.
+///
+/// Windows deliberately does **not** go through `cmd /C start`. Rust quotes
+/// `Command` arguments by `CommandLineToArgvW` rules, and the escaping added
+/// for CVE-2024-24576 only applies when the *program* is a `.bat`/`.cmd` — with
+/// `cmd.exe` as the program, `&`, `|`, `^` and `%VAR%` in the argument are
+/// re-parsed by the shell. The argument here is a link rendered by the harness
+/// page, so page content would decide whether a second command runs.
 fn open_with_system(target: &str) {
-    let mut command = if cfg!(target_os = "windows") {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", ""]);
-        c
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open")
-    } else {
-        std::process::Command::new("xdg-open")
-    };
-    command.arg(target);
-
-    // Same reason as the backend: `cmd.exe` is a console program, and letting
-    // it allocate a window would flash a black box every time someone opens
-    // the log.
     #[cfg(windows)]
+    windows_open::open(target);
+
+    #[cfg(not(windows))]
     {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        // Reported rather than ignored: "Open Log File" silently doing nothing
+        // is worse than one line in the log.
+        if let Err(error) = std::process::Command::new(opener).arg(target).spawn() {
+            crate::logging::line(&format!("dsh-desktop: could not open {target}: {error}"));
+        }
+    }
+}
+
+/// `ShellExecuteW` with the `open` verb, declared directly so one call does not
+/// justify a Windows-API crate.
+#[cfg(windows)]
+mod windows_open {
+    use std::ffi::{c_void, OsStr};
+    use std::iter;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show: i32,
+        ) -> *mut c_void;
     }
 
-    let _ = command.spawn();
+    /// `SW_SHOWNORMAL`: restore and activate, which is what a hand-off means.
+    const SW_SHOWNORMAL: i32 = 1;
+
+    /// A NUL-terminated UTF-16 copy of `text`.
+    fn wide(text: &str) -> Vec<u16> {
+        OsStr::new(text).encode_wide().chain(iter::once(0)).collect()
+    }
+
+    /// Hand `target` to the shell. Success is the documented contract that the
+    /// returned value exceeds 32; there is no last-error to consult.
+    pub fn open(target: &str) {
+        let operation = wide("open");
+        let file = wide(target);
+        let result = unsafe {
+            ShellExecuteW(
+                ptr::null_mut(),
+                operation.as_ptr(),
+                file.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if (result as isize) <= 32 {
+            crate::logging::line(&format!(
+                "dsh-desktop: ShellExecuteW could not open {target} (code {})",
+                result as isize
+            ));
+        }
+    }
 }
 
 /// Open a path with whatever the desktop uses for it.

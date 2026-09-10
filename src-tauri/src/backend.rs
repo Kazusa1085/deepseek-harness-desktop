@@ -353,30 +353,15 @@ fn prepend_path(cmd: &mut Command, dir: &Path) {
     }
 }
 
-/// Is this a Windows batch script rather than a real executable?
-///
-/// It matters because `npx` ships as `npx.cmd`: `CreateProcess` refuses batch
-/// files outright, so spawning one directly fails with "not a valid Win32
-/// application". They have to go through `cmd.exe /C`.
-#[cfg(windows)]
-fn is_batch_script(program: &Path) -> bool {
-    program
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
-}
-
 /// Build a `Command` for an executable, exposing its own directory to the
 /// child so sibling tools remain reachable.
+///
+/// A `.cmd`/`.bat` program — `npx` ships as `npx.cmd` — needs no wrapper here:
+/// `std` detects a batch file and invokes the command processor with arguments
+/// escaped for it (since 1.77.2, which also closed CVE-2024-24576). The
+/// hand-rolled `cmd /C <program>` this replaces got both wrong: it broke on a
+/// program path containing spaces, and it left the arguments unescaped.
 fn command_at(program: &Path) -> Command {
-    #[cfg(windows)]
-    let mut cmd = if is_batch_script(program) {
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C").arg(program);
-        cmd
-    } else {
-        Command::new(program)
-    };
-    #[cfg(not(windows))]
     let mut cmd = Command::new(program);
 
     #[cfg(windows)]
