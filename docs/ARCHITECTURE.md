@@ -73,7 +73,7 @@ harness and is identical to what the browser version stores.
    │                                          │    1. $DSH_DESKTOP_BACKEND
    │                                          │    2. bundled bin.js
    │                                          │    3. `dsh` (PATH + extra dirs)
-   │                                          │    4. `npx --yes @deepseek-ai/dsh@latest`
+   │                                          │    4. `npx --yes @deepseek-ai/dsh@<pinned>`
    │                                          │    (+ `web --no-open --port $DSH_DESKTOP_PORT|0`)
    │                                          │    (+ PATH prepended with the tool's dir)
    │                                          │
@@ -106,8 +106,16 @@ harness and is identical to what the browser version stores.
 ```
 
 The 45-second `READY_TIMEOUT` is deliberately generous: resolution path 4
-(`npx --yes @deepseek-ai/dsh@latest`) may download the package on a cold cache
-before the server can print anything.
+(`npx --yes @deepseek-ai/dsh@<version>`, the version `backend/package.json`
+pins) may download the package on a cold cache before the server can print
+anything.
+
+Once the server is up, a supervisor thread polls the child every 500 ms. A
+backend that exits on its own — a crash, an OOM kill, a `dsh` that gives up — is
+therefore reaped instead of left as a zombie, its pid is retired so a later
+`shutdown` cannot signal whatever inherited the number, and one line lands in
+the log. The window is told nothing yet: restarting the server means telling it,
+which is a separate change.
 
 ## Shutdown sequence
 
@@ -202,6 +210,13 @@ Streaming matters here: the payload contains a ~100 MB interpreter, so it is
 read and written in 64 KB chunks rather than held in memory. Paths are
 validated before writing, and the completion marker is only written at the very
 end, so an interrupted unpack is redone rather than half-used.
+
+Each record carries the file's unix mode, because the payload's executables are
+not at its root: ripgrep's binary, node-pty's `spawn-helper` on macOS and
+koffi's module all sit several directories down, and a runtime that unpacks them
+as `0644` fails much later with EACCES, at the first search or terminal call.
+Restoring the recorded mode is what makes a macOS or Linux portable build
+usable at all — Windows identifies executables by extension instead.
 
 ### `src-tauri/src/logging.rs`
 

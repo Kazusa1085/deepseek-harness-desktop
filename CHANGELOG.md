@@ -55,6 +55,10 @@ published build is [0.1.7](#017--2026-08-26).
   files to ~144 MB / 10,639, and the Linux download from 55.7 MB to about 45 MB.
   The new CI job installs, prunes and then **starts** the harness from the pruned
   tree, so the prune cannot quietly break the runtime.
+- **The rpm payload is xz-compressed.** Tauri's deb bundler hardcodes gzip and
+  exposes no setting for it, but the rpm bundler does: `bundle.linux.rpm`
+  compression, level 9, takes the rpm from 34.5 MB to 32.4 MB on the pruned tree
+  (and from 59.3 MB before the prune).
 - **The release binary is stripped and thin-LTO'd:** 13,716,184 B → 7,900,200 B
   (-42.4 %) with `strip`, `lto = "thin"` and `codegen-units = 1`.
 - **The harness is pinned exactly** (`0.1.5-rc.1`) instead of by a caret range
@@ -107,6 +111,28 @@ published build is [0.1.7](#017--2026-08-26).
   manual `cmd /C` wrapper around batch programs (`npx.cmd`), which `std` has
   invoked safely since 1.77.2 — the wrapper also broke on program paths that
   contain spaces.
+- **The backend is supervised.** Nothing called `wait()` on the success path, so
+  a server that died mid-session stayed a zombie while the window showed a dead
+  page, and `shutdown`/`Drop` could signal a pid the OS had already handed to
+  another process. A supervisor thread reaps the child, retires the pid and
+  writes one line to the log. Restarting the server is deliberately still out of
+  scope: that needs the window told about it.
+- **A portable payload restores every executable bit.** Only depth-1 entries were
+  chmodded when unpacking, so a macOS or Linux portable build produced a runtime
+  whose ripgrep binary and node-pty helper stayed `0644` — file search and
+  terminal tools then failed with EACCES at first use. The mode is now recorded
+  per file at pack time.
+- **The `npx` fallback is pinned instead of `@latest`.** A harness release can
+  change the session format generation, and every stored session then has to be
+  migrated, so the fallback installs `@deepseek-ai/dsh@<the version
+  backend/package.json pins>`; the build refuses a range, which keeps that file
+  the single source of truth.
+- **The status panel stops re-parsing on every poll.** It is polled every two
+  seconds; each poll re-read the entire session cache, serialised every session
+  over IPC (the panel renders nine) and, once the five-minute balance TTL
+  expired, waited on the HTTPS request before answering. The parse is memoized on
+  the cache file's identity, at most twelve rows are sent, and a stale balance is
+  returned immediately while one background request refreshes it.
 - **Closing the window during startup no longer orphans the backend.** The
   child is registered for teardown the moment it spawns, before it announces
   its URL, and a late startup success cannot open a window for an exiting app.

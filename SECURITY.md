@@ -147,8 +147,10 @@ for how to spot and stop an orphan.
   so the manifest cannot resolve to a build nobody tested. The pnpm/bun/npm
   fallbacks in `scripts/install-backend.mjs` discard the lockfile and only run
   when it is absent.
-- The `npx --yes @deepseek-ai/dsh@latest` fallback downloads and executes the
-  latest published harness. Convenient, but it is a network-fetch-and-run path:
+- The `npx` fallback downloads and executes a published harness, pinned to the
+  version `backend/package.json` names (path 4 of backend resolution). It is
+  still a network-fetch-and-run path — pinned only means the version is the one
+  this shell was built and tested against, not that npm verified anything — so
   avoid it in hardened environments by installing the backend explicitly or
   setting `DSH_DESKTOP_BACKEND`. **The portable build never reaches it** — it
   carries its runtime and interpreter inside the executable and touches the
