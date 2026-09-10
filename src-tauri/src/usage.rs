@@ -17,7 +17,7 @@ use std::{
     env, fs,
     path::PathBuf,
     sync::OnceLock,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use serde::Serialize;
@@ -26,6 +26,13 @@ use tokio::sync::Mutex;
 
 /// How stale the cached balance may get before it is fetched again.
 const BALANCE_TTL: Duration = Duration::from_secs(300);
+
+/// How many session rows the panel is sent.
+///
+/// It renders the current session plus eight rows, and a busy harness can hold
+/// hundreds, so serialising every one of them over IPC every two seconds is
+/// waste. The margin covers a render that lands between two polls.
+const MAX_SESSIONS: usize = 12;
 
 /// Where the harness keeps its state.
 ///
@@ -119,12 +126,17 @@ fn number(value: Option<&Value>, field: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Read every session the harness has cached.
-pub fn sessions() -> Result<(Vec<Session>, PathBuf), String> {
-    let path = harness_dir()
+/// Path of the harness's session projection cache.
+fn session_cache_path() -> Result<PathBuf, String> {
+    Ok(harness_dir()
         .ok_or_else(|| "could not locate the home directory".to_string())?
         .join("storages")
-        .join("session_projcache.json");
+        .join("session_projcache.json"))
+}
+
+/// Read every session the harness has cached.
+pub fn sessions() -> Result<(Vec<Session>, PathBuf), String> {
+    let path = session_cache_path()?;
 
     let text =
         fs::read_to_string(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
@@ -196,8 +208,53 @@ pub fn sessions() -> Result<(Vec<Session>, PathBuf), String> {
     Ok((sessions, path))
 }
 
-/// The harness's full id of the most recently used session, if any.
+/// The last parse of the session cache, keyed by the file it came from.
+struct SessionsMemo {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    len: u64,
+    sessions: Vec<Session>,
+}
+
+fn sessions_memo() -> &'static std::sync::Mutex<Option<SessionsMemo>> {
+    static MEMO: OnceLock<std::sync::Mutex<Option<SessionsMemo>>> = OnceLock::new();
+    MEMO.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Session rows for the panel, memoized on the cache file's identity.
 ///
+/// The panel polls every two seconds, and re-reading plus re-parsing the whole
+/// cache each time spends a blocking thread on numbers that only change when a
+/// turn ends. The file's (modified time, length) is the key: the harness
+/// rewrites it whenever it records anything, so a mismatch is the signal to
+/// re-read. At most [`MAX_SESSIONS`] rows come back, because that is all the
+/// panel renders.
+pub fn sessions_cached() -> Result<(Vec<Session>, PathBuf), String> {
+    let path = session_cache_path()?;
+    let identity = fs::metadata(&path).map_or((None, 0), |meta| (meta.modified().ok(), meta.len()));
+
+    if let Ok(guard) = sessions_memo().lock() {
+        if let Some(memo) = guard.as_ref() {
+            if memo.path == path && (memo.modified, memo.len) == identity {
+                return Ok((memo.sessions.clone(), memo.path.clone()));
+            }
+        }
+    }
+
+    let (sessions, path) = sessions()?;
+    let sessions: Vec<Session> = sessions.into_iter().take(MAX_SESSIONS).collect();
+    if let Ok(mut guard) = sessions_memo().lock() {
+        *guard = Some(SessionsMemo {
+            path: path.clone(),
+            modified: identity.0,
+            len: identity.1,
+            sessions: sessions.clone(),
+        });
+    }
+    Ok((sessions, path))
+}
+
+/// The harness's full id of the most recently used session, if any.///
 /// `sessions()` strips the `session-` prefix for display; the seed injected
 /// into the webview needs the full id back, so it is reconstructed here.
 pub fn latest_session_id() -> Option<String> {
@@ -305,9 +362,20 @@ async fn balance(force: bool) -> Result<Balance, String> {
             if fetched.elapsed() < BALANCE_TTL {
                 return cached.clone();
             }
+            // Stale: answer with what we have and refresh behind the caller.
+            // The panel polls every two seconds and must never wait on a
+            // network request; the explicit refresh command is the one that
+            // waits for a fresh answer.
+            refresh_balance_in_background();
+            return cached.clone();
         }
     }
+    balance_now(force).await
+}
 
+/// Fetch the balance, wait for it, and cache the result — failures included,
+/// so a rejected key or an offline machine is not retried every two seconds.
+async fn balance_now(force: bool) -> Result<Balance, String> {
     // Single-flight for automatic refreshes. A manual refresh skips the wait
     // and always asks the API again.
     let _guard = if force {
@@ -324,15 +392,35 @@ async fn balance(force: bool) -> Result<Balance, String> {
         }
     }
 
-    let fresh = match tauri::async_runtime::spawn_blocking(request_balance).await {
-        Ok(result) => result,
-        Err(e) => Err(format!("balance request failed: {e}")),
-    };
-
-    // Cache failures too: a rejected key or an offline machine should not
-    // trigger a new request every two seconds.
+    let fresh = fetch_balance().await;
     *balance_cache().lock().await = Some((Instant::now(), fresh.clone()));
     fresh
+}
+
+/// Refresh a stale entry without making the caller wait for it.
+fn refresh_balance_in_background() {
+    tauri::async_runtime::spawn(async move {
+        // One refresh at a time: a poll that lands while one is in flight does
+        // nothing rather than queueing another request behind it.
+        let Ok(_guard) = BALANCE_FETCH_LOCK.try_lock() else {
+            return;
+        };
+        if let Some((fetched, _)) = balance_cache().lock().await.as_ref() {
+            if fetched.elapsed() < BALANCE_TTL {
+                return;
+            }
+        }
+        let fresh = fetch_balance().await;
+        *balance_cache().lock().await = Some((Instant::now(), fresh));
+    });
+}
+
+/// The network half, isolated so both paths cache identically.
+async fn fetch_balance() -> Result<Balance, String> {
+    match tauri::async_runtime::spawn_blocking(request_balance).await {
+        Ok(result) => result,
+        Err(e) => Err(format!("balance request failed: {e}")),
+    }
 }
 
 fn snapshot_from(
@@ -370,7 +458,7 @@ pub async fn usage_snapshot(webview: tauri::Webview) -> Result<Snapshot, String>
         return Err("usage data is only available to the status panel".to_string());
     }
 
-    let sessions = tauri::async_runtime::spawn_blocking(sessions)
+    let sessions = tauri::async_runtime::spawn_blocking(sessions_cached)
         .await
         .map_err(|e| format!("could not read sessions: {e}"))?;
     let balance = balance(false).await;
