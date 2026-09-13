@@ -22,7 +22,7 @@ window is allowed to load.
 |---|---|
 | Network exposure | The shell opens no sockets. The server it starts binds `127.0.0.1` on an OS-assigned port. |
 | Window origin | Only the loopback URL announced by the process the shell itself started, used verbatim — including the per-run `?token=` query that URL now carries (a fresh secret per run, never persisted, masked in the log). Navigation away from that origin is cancelled; external `http`/`https`/`mailto`/`tel` links are opened in the system browser instead. |
-| Native API exposure | `withGlobalTauri: false` and no plugins. Three app-defined IPC commands exist — `usage_snapshot` (status panel only), `titlebar_menu` and `titlebar_window` (Linux title bar only) — and each checks the calling webview's label. The remote harness page has no IPC access. |
+| Native API exposure | `withGlobalTauri: false` and no plugins. Three app-defined IPC commands exist — `usage_snapshot` (status panel only), `titlebar_menu` and `titlebar_window` (Linux/Windows title bar only) — and each checks the calling webview's label. The remote harness page has no IPC access. |
 | Persisted secrets | None. The shell stores no credential of its own. |
 | Credentials read | The status panel reads `DEEPSEEK_API_KEY` from the harness's own `~/.dsh/.credentials.yaml` to call `/user/balance`. Read-only, never copied, never logged. |
 | What the shell writes | A log file per run, and — portable build only — the runtime it unpacks from its own binary. Both under the user's own data directories. Neither holds credentials. |

@@ -173,13 +173,14 @@ fn secret_value_end(after_key: &str) -> Option<(usize, usize)> {
     while matches!(bytes.get(index), Some(b' ') | Some(b'\t')) {
         index += 1;
     }
-    let separator = if after_key[index..].starts_with("%3D") || after_key[index..].starts_with("%3d") {
-        3
-    } else if matches!(bytes.get(index), Some(b'=') | Some(b':')) {
-        1
-    } else {
-        return None;
-    };
+    let separator =
+        if after_key[index..].starts_with("%3D") || after_key[index..].starts_with("%3d") {
+            3
+        } else if matches!(bytes.get(index), Some(b'=') | Some(b':')) {
+            1
+        } else {
+            return None;
+        };
     index += separator;
     if bytes.get(index) == Some(&b'"') {
         index += 1;
@@ -223,8 +224,14 @@ mod tests {
     #[test]
     fn leaves_ordinary_text_alone() {
         // Whole words only: these are not credentials.
-        assert_eq!(redact("max_tokens=4096 tokens=2"), "max_tokens=4096 tokens=2");
-        assert_eq!(redact("the token budget is fine"), "the token budget is fine");
+        assert_eq!(
+            redact("max_tokens=4096 tokens=2"),
+            "max_tokens=4096 tokens=2"
+        );
+        assert_eq!(
+            redact("the token budget is fine"),
+            "the token budget is fine"
+        );
         assert_eq!(redact("nothing to hide"), "nothing to hide");
         // Nothing follows the key, so there is nothing to mask.
         assert_eq!(redact("token="), "token=");

@@ -29,12 +29,11 @@ use tauri::{
 /// How wide the status panel is, in logical pixels.
 const PANEL_WIDTH: f64 = 320.0;
 
-/// Height of the custom title bar. Only Linux uses a custom bar: macOS keeps
-/// its native traffic lights and Windows keeps its snap affordances, so on
-/// those platforms the bar is simply not created and the height is zero.
-#[cfg(target_os = "linux")]
+/// Height of the custom title bar. Linux and Windows use the same bar; macOS
+/// keeps its native traffic lights, so there the height is zero.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const TITLEBAR_HEIGHT: f64 = 38.0;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 const TITLEBAR_HEIGHT: f64 = 0.0;
 
 /// The label of the custom title bar webview. Its commands refuse any other
@@ -42,8 +41,8 @@ const TITLEBAR_HEIGHT: f64 = 0.0;
 pub const TITLEBAR_LABEL: &str = "titlebar";
 
 /// The application menu, kept as managed state so the title bar's menu button
-/// can pop it up as a context menu on Linux where the native menu bar is
-/// hidden with the decorations.
+/// can pop it up as a context menu where the native menu bar is hidden with
+/// the decorations (Linux and Windows).
 struct MenuState(Menu<tauri::Wry>);
 
 /// How the status panel is displayed.
@@ -373,7 +372,10 @@ mod windows_open {
 
     /// A NUL-terminated UTF-16 copy of `text`.
     fn wide(text: &str) -> Vec<u16> {
-        OsStr::new(text).encode_wide().chain(iter::once(0)).collect()
+        OsStr::new(text)
+            .encode_wide()
+            .chain(iter::once(0))
+            .collect()
     }
 
     /// Hand `target` to the shell. Success is the documented contract that the
@@ -485,22 +487,23 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         &[&reload, &inspector, &logs, &folder],
     )?;
 
-    // Linux starts from an empty menu: the native bar is hidden, so the only
-    // entries should be the two this app actually needs. macOS and Windows
-    // keep the platform's default Edit/Window/Help submenus.
-    #[cfg(target_os = "linux")]
+    // Linux and Windows use the custom title bar, so the native menu bar is
+    // hidden there and the menu starts empty: the only entries should be the
+    // two this app actually needs. macOS keeps the platform's default
+    // Edit/Window/Help submenus.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let menu = Menu::new(app.handle())?;
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let menu = Menu::default(app.handle())?;
     menu.append(&view)?;
     menu.append(&submenu)?;
-    // The Linux custom title bar needs the same menu to show at the cursor
-    // when its menu button is pressed. It is never attached to the Linux
-    // window: attaching it would pack a visible GtkMenuBar into the client
-    // area even with decorations disabled.
-    #[cfg(target_os = "linux")]
+    // The custom title bar needs the same menu to show under its menu button.
+    // It is never attached on Linux or Windows: on Linux that would pack a
+    // visible GtkMenuBar into the client area, and on Windows it would put a
+    // native menu strip back above the custom bar.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     app.manage(MenuState(menu));
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         app.manage(MenuState(menu.clone()));
         app.set_menu(menu)?;
@@ -562,24 +565,25 @@ fn create_shell_window(app: &tauri::App) -> tauri::Result<Window> {
         .resizable(true)
         .center();
 
-    // Linux gets a custom title bar, so the native one has to go. macOS and
-    // Windows keep their native decorations.
-    #[cfg(target_os = "linux")]
+    // Linux and Windows get the same custom title bar, so the native one has
+    // to go on both. macOS keeps its traffic lights.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.decorations(false);
 
     let window = builder.build()?;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
-        let titlebar = window.add_child(
+        let _titlebar = window.add_child(
             WebviewBuilder::new(TITLEBAR_LABEL, WebviewUrl::App("titlebar.html".into())),
             LogicalPosition::new(0.0, 0.0),
             LogicalSize::new(1280.0, TITLEBAR_HEIGHT),
         )?;
+        #[cfg(target_os = "linux")]
         linux_layout::attach(
             &window,
             TITLEBAR_LABEL,
-            titlebar,
+            _titlebar,
             0.0,
             0.0,
             1280.0,

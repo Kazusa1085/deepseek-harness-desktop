@@ -46,7 +46,7 @@ make that lifecycle reliable.
 
 The shell owns **no application state**. There is no database and no settings
 file of its own, and the only Tauri IPC commands are label-gated to the local
-status panel and the Linux title bar — never to the harness page. Every piece
+status panel and the Linux/Windows title bar — never to the harness page. Every piece
 of user state — sessions, API keys, model selection, plugins — lives inside the
 harness and is identical to what the browser version stores.
 
@@ -159,7 +159,8 @@ console window appears on Windows) and calls `dsh_desktop_lib::run()`.
   a successful spawn. `shutdown()` drains the managed backend and then kills
   any pending child that never got registered.
 - **`create_shell_window`** — opens the one application window up front: the
-  Linux custom title bar plus a splash child webview filling the content area.
+  Linux/Windows custom title bar plus a splash child webview filling the
+  content area.
 - **`activate_harness`** — hides the splash child webview and adds the harness
   and panel child webviews in the same window once the URL is known. Parse
   failures are surfaced as `io::ErrorKind::InvalidInput` rather than panicking.
@@ -258,7 +259,7 @@ takes its place in the same window.
 
 ### `src/titlebar.html`
 
-The custom title bar webview, built on Linux only. It is a drag region
+The custom title bar webview, shared by Linux and Windows. It is a drag region
 (`data-tauri-drag-region`) with minimize, maximize/restore, and close buttons
 backed by the label-checked `titlebar_window` command, plus a menu button that
 pops up the same View / Troubleshooting menu via `titlebar_menu`.
@@ -328,13 +329,14 @@ On Windows the hand-off is `ShellExecuteW`, not `cmd /C start`: the argument is
 a link the harness page rendered, and `cmd.exe` re-parses `&`, `|`, `^` and
 `%VAR%` in it, so page content would decide whether a second command runs.
 
-### Custom title bar on Linux only
+### One custom title bar for Linux and Windows
 
-Linux users get an undecorated window plus a 38-pixel app-local titlebar
-webview. The other platforms keep native decorations because macOS traffic
-lights and Windows snap affordances are genuinely useful there. The titlebar
-commands and the status-panel command all verify the calling webview label, so
-the harness page cannot drive the window or read the balance.
+Linux and Windows get the same undecorated window plus a 38-pixel app-local
+titlebar webview. The only platform split is how the child webview is placed:
+Linux reparents the GTK widgets into a `gtk::Fixed`, Windows uses Tauri's
+WebView2 child bounds. macOS keeps its native title bar and traffic lights.
+The titlebar commands and the status-panel command all verify the calling
+webview label, so the harness page cannot drive the window or read the balance.
 
 ### `csp: null`
 

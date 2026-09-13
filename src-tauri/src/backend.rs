@@ -952,8 +952,8 @@ pub fn search_roots(app: &tauri::App) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_url, is_js_entry, parse_version, read_lines_lossy, strip_verbatim_prefix, supervise,
-        BackendProcess,
+        extract_url, is_js_entry, parse_version, read_lines_lossy, strip_verbatim_prefix,
+        supervise, BackendProcess,
     };
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
@@ -1033,8 +1033,14 @@ mod tests {
             None
         );
         // Only our own loopback http origin is loaded into the webview.
-        assert_eq!(extract_url("dsh web: http://0.0.0.0:34733/?token=abc"), None);
-        assert_eq!(extract_url("dsh web: https://127.0.0.1:34733/?token=abc"), None);
+        assert_eq!(
+            extract_url("dsh web: http://0.0.0.0:34733/?token=abc"),
+            None
+        );
+        assert_eq!(
+            extract_url("dsh web: https://127.0.0.1:34733/?token=abc"),
+            None
+        );
         assert_eq!(extract_url("dsh web: http://127.0.0.1/?token=abc"), None);
     }
 

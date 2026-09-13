@@ -231,7 +231,7 @@ src-tauri/                 Rust (Tauri) shell
   icons/                   generated platform icons
 backend/                   the harness runtime (installed by `npm run backend:install`)
 src/index.html             startup splash shown inside the main window; progress bar plus an always-visible log terminal
-src/titlebar.html          the Linux custom title bar (window controls + menu)
+src/titlebar.html          the Linux/Windows custom title bar (window controls + menu)
 src/panel.html             the status panel webview (context, tokens, timings, balance)
 assets/deepseek-whale.svg  the DeepSeek whale mark used by the app icon
 scripts/
@@ -292,7 +292,7 @@ Startup failures are shown in the window itself, with the exact command that was
 - **`app.security.csp` is `null` on purpose.** The harness UI evaluates client-side Cordis plugin code and opens a WebSocket to its own loopback origin; a restrictive CSP would break both. The window only ever loads `http://127.0.0.1:<port>` — see [SECURITY.md](SECURITY.md) for the full reasoning.
 - **External links leave the app.** Navigations that target the backend's loopback origin stay in the webview; `http`/`https`/`mailto`/`tel` destinations anywhere else are cancelled and handed to the system browser, as are `target="_blank"` popups.
 - **The last session comes back on launch.** The backend's random port means a fresh browser origin every run, which would otherwise wipe the harness's persisted session selection; the shell seeds the most recent session id from `session_projcache.json` into the page before it boots.
-- **Linux gets a custom title bar.** The native decorations (and their Edit/Window/Help menu) are disabled there, replaced by a separate app-local webview with window controls and a menu button that pops up the same View / Troubleshooting menu. macOS and Windows keep their native decorations.
+- **Linux and Windows share one custom title bar.** The native decorations (and their Edit/Window/Help menu) are disabled on both, replaced by the same app-local webview with window controls and a menu button that pops up the View / Troubleshooting menu. macOS keeps its native title bar and traffic lights.
 - **The port defaults to `0`.** The shell always reads the URL the server announces rather than assuming a port, so multiple instances coexist.
 - **Shutdown kills a process group, not a process.** The harness spawns shell tool subprocesses; killing only the server PID would strand them. On Unix the child is started as its own group leader and receives `SIGTERM` to the negated PID; on Windows the equivalent is `taskkill /T /F`.
 - **Node is found, not bundled — except in the portable build.** The regular
@@ -301,7 +301,7 @@ Startup failures are shown in the window itself, with the exact command that was
   directories a GUI launcher hides — see [Finding Node](#finding-node). The
   optional `portable` feature is the deliberate exception: it carries its own
   Node and runtime inside the executable and unpacks them on first run.
-- **The shell is stateless.** No database and no config file of its own. The only IPC commands are the status-panel snapshot and the Linux title-bar controls, both restricted to their own app-local webviews; the harness page gets none. If a feature belongs to the agent, it belongs upstream in the harness.
+- **The shell is stateless.** No database and no config file of its own. The only IPC commands are the status-panel snapshot and the Linux/Windows title-bar controls, both restricted to their own app-local webviews; the harness page gets none. If a feature belongs to the agent, it belongs upstream in the harness.
 
 ## Known gaps
 

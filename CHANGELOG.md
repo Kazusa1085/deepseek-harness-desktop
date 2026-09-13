@@ -27,17 +27,18 @@ published build is [0.1.7](#017--2026-08-26).
   webview, so the harness's own page cannot read the balance through the shared
   IPC bridge.
 - **Startup happens in the one real window.** The app opens at its normal
-  size with the Linux custom title bar immediately, shows an indeterminate
+  size with the custom title bar immediately, shows an indeterminate
   progress bar above an always-visible terminal log in the content area, then
   swaps that webview for the harness and status panel when the backend
   announces its URL — no second window, no resize jump.
 - **External links open in the system browser.** Same-origin navigation stays
   in the app; `http`/`https`/`mailto`/`tel` destinations and `target="_blank"`
   popups elsewhere are intercepted and handed to the desktop.
-- **Linux gets a custom title bar.** Native decorations and the
-  Edit/Window/Help menu are gone there; a separate app-local webview provides
-  window controls and a menu button for View / Troubleshooting. macOS and
-  Windows are unchanged.
+- **Linux and Windows share one custom title bar.** Native decorations and the
+  Edit/Window/Help menu are gone on both; the same app-local webview provides
+  window controls and a menu button for View / Troubleshooting. Only child
+  webview placement differs (GTK `Fixed` on Linux, WebView2 bounds on Windows);
+  macOS keeps its native title bar.
 - The Account card has a **refresh button** that forces an immediate
   `/user/balance` update; automatic refreshes stay on the five-minute cache.
 - **Launching reopens the most recently used session** instead of a new one.
