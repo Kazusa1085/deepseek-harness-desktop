@@ -5,13 +5,13 @@
   "description": "Bundled DeepSeek Harness runtime for the dsh-desktop shell (installed into node_modules and shipped in app resources)",
   "type": "module",
   "dependencies": {
-    "@deepseek-ai/dsh": "0.1.5-rc.1"
+    "@deepseek-ai/dsh": "0.2.0-rc.2"
   },
   "//": "The harness is pinned exactly. `@deepseek-ai/dsh` publishes pre-releases (there has never been a stable release), so a caret range would also accept the next 0.2.x; the pin plus backend/package-lock.json is what makes a build reproducible. When you bump it, also update the allowScripts keys below: a key that no longer matches its exact version means npm 12 blocks that package's install scripts, and the native pieces (node-pty's spawn-helper, koffi) fail later at runtime instead of at install time. `npm run backend:install` asserts the load-bearing ones.",
   "allowScripts": {
-    "@deepseek-ai/dsh-subprocess-local@0.1.5-rc.1": true,
-    "@google/genai@1.52.0": true,
-    "koffi@3.2.1": true,
+    "@deepseek-ai/dsh-subprocess-local@0.2.0-rc.2": true,
+    "@google/genai@2.21.0": true,
+    "koffi@3.1.1": true,
     "node-pty@1.2.0-beta.15": true,
     "protobufjs@7.6.6": true
   }

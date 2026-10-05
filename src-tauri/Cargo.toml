@@ -1,6 +1,6 @@
 [package]
-name = "dsh-desktop"
-version = "0.2.1"
+name = "dsh-desktop-next"
+version = "0.3.0"
 description = "DeepSeek Harness desktop shell: a Tauri + Rust window around the dsh web GUI"
 authors = ["Alessandro Cyriaco"]
 edition = "2021"
